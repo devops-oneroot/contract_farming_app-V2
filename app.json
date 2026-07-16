@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "CF-OneRoot",
-    "slug": "frontend",
+    "slug": "cf-oneroot",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -77,10 +77,11 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
+    "owner": "haider_oneroot",
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "be6f4343-3e14-4370-b2c8-60a5741b5664"
+        "projectId": "9384415d-26e1-4dc5-bc14-0b73e22c68f1"
       }
     }
   }
