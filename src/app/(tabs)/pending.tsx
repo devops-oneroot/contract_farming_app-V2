@@ -1,17 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, Crop, Farmer, PackageOfPractices, PopStep } from '@/lib/api';
+import { api, Crop, Farmer, isContract, PackageOfPractices, PopStep } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
 const GREEN = Brand.primary;
@@ -39,6 +51,20 @@ type Task = {
   status: TaskStatus;
 };
 
+/**
+ * A product this agronomist handed over whose follow-up after-photo is now due.
+ * One entry per product line, since each carries its own proof.
+ */
+type FollowUp = {
+  saleId: string;
+  index: number; // the line's position in the sale's items
+  product: string;
+  farmer: string;
+  crop: string;
+  soldAt: string;
+  beforePhotoUrl: string;
+};
+
 // A boundary needs at least 3 corners to be a polygon — matches the farmer detail
 // and profile screens, so "set" means the same thing everywhere.
 const MIN_BOUNDARY_CORNERS = 3;
@@ -54,6 +80,9 @@ export default function PendingScreen() {
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [afterFor, setAfterFor] = useState<FollowUp | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [cropFilter, setCropFilter] = useState<string | null>(null);
   const [sheetTask, setSheetTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +92,30 @@ export default function PendingScreen() {
     if (!user) return;
     setError(null);
     try {
+      // Follow-up photos this agronomist owes: they belong to whoever handed the
+      // product over, not to whoever now manages the farmer.
+      api
+        .listProductSales({ agronomistId: user._id, pendingAfter: true })
+        .then((sales) =>
+          setFollowUps(
+            sales.flatMap((s) =>
+              s.items
+                .map((it, index) => ({ it, index }))
+                .filter(({ it }) => !it.afterPhotoUrl)
+                .map(({ it, index }) => ({
+                  saleId: s._id,
+                  index,
+                  product: it.name,
+                  farmer: s.farmerName,
+                  crop: s.cropName,
+                  soldAt: s.soldAt,
+                  beforePhotoUrl: it.beforePhotoUrl,
+                }))
+            )
+          )
+        )
+        .catch(() => setFollowUps([]));
+
       const farmers: Farmer[] = await api.listAgronomistFarmers(user._id);
       const cropLists = await Promise.all(
         farmers.map((f) =>
@@ -72,8 +125,9 @@ export default function PendingScreen() {
             .catch(() => ({ farmer: f, crops: [] as Crop[] }))
         )
       );
-      // Distinct crop names → their Package of Practices.
-      const names = [...new Set(cropLists.flatMap((cl) => cl.crops.map((c) => c.name)))];
+      // Distinct crop names → their Package of Practices. Regular crops follow no
+      // schedule, so they raise no tasks to verify and are not worth a request.
+      const names = [...new Set(cropLists.flatMap((cl) => cl.crops.filter(isContract).map((c) => c.name)))];
       const pops = await Promise.all(names.map((n) => api.getPractices(n).catch(() => null)));
       const popMap: Record<string, PackageOfPractices> = {};
       pops.forEach((p, i) => {
@@ -84,7 +138,7 @@ export default function PendingScreen() {
       const out: Task[] = [];
       for (const { farmer, crops } of cropLists) {
         for (const c of crops) {
-          if (!c.dop) continue;
+          if (!isContract(c) || !c.dop) continue;
           const pop = popMap[c.name.toLowerCase()];
           if (!pop) continue;
           // Which day of the crop cycle is today?
@@ -134,6 +188,35 @@ export default function PendingScreen() {
       load();
     }, [load])
   );
+
+  // The follow-up shot, taken a week after handover to show what the product did.
+  const captureAfter = async (uri: string) => {
+    if (!afterFor) return;
+    const { saleId, index } = afterFor;
+    setAfterFor(null);
+    setUploading(true);
+    try {
+      let sized = uri;
+      try {
+        const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+          compress: 0.6,
+          format: ImageManipulator.SaveFormat.JPEG,
+        });
+        sized = out.uri;
+      } catch {
+        // never lose the shot because the resize failed
+      }
+      await api.addAfterPhotos(saleId, [
+        { index, photo: { uri: sized, name: `after_${index}.jpg`, type: 'image/jpeg' } },
+      ]);
+      // Off the list the moment it is done — this is a to-do, not a log.
+      setFollowUps((fs) => fs.filter((f) => !(f.saleId === saleId && f.index === index)));
+    } catch (e: any) {
+      Alert.alert('Could not save the photo', e?.message || 'Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // Open the day in a given mode: 'operation' (POP of the day) or 'product'.
   const openMode = (t: Task, mode: 'operation' | 'product') => {
@@ -200,6 +283,7 @@ export default function PendingScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             {today}
             {visibleTasks.length > 0 ? ` · ${pendingCount} to verify` : ''}
+            {followUps.length > 0 ? ` · ${followUps.length} after photo${followUps.length > 1 ? 's' : ''} due` : ''}
           </ThemedText>
         </View>
 
@@ -234,9 +318,66 @@ export default function PendingScreen() {
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
+          {/* Follow-up after-photos that came due — owed by whoever sold the
+              product, so they sit above the day's verification work. */}
+          {followUps.length > 0 && (
+            <View style={{ marginBottom: Spacing.three }}>
+              <View style={styles.sectionHead}>
+                <Ionicons name="camera" size={16} color={AMBER} />
+                <ThemedText type="smallBold" style={{ flex: 1 }}>
+                  After photos due ({followUps.length})
+                </ThemedText>
+              </View>
+              {followUps.map((f) => (
+                <ThemedView
+                  key={`${f.saleId}-${f.index}`}
+                  type="backgroundElement"
+                  style={styles.followCard}>
+                  {f.beforePhotoUrl ? (
+                    <Image
+                      source={{ uri: f.beforePhotoUrl }}
+                      style={styles.followThumb}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={[styles.followThumb, { backgroundColor: 'rgba(127,127,127,0.15)' }]} />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="smallBold" numberOfLines={1}>
+                      {f.product}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {f.farmer}
+                      {f.crop ? ` · ${f.crop}` : ''}
+                    </ThemedText>
+                    <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
+                      Given {Math.max(0, Math.floor((Date.now() - new Date(f.soldAt).getTime()) / DAY_MS))}{' '}
+                      days ago
+                    </ThemedText>
+                  </View>
+                  <Pressable
+                    onPress={() => setAfterFor(f)}
+                    disabled={uploading}
+                    style={[styles.followBtn, { opacity: uploading ? 0.6 : 1 }]}>
+                    {uploading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="camera-outline" size={16} color="#fff" />
+                        <ThemedText type="small" style={{ color: '#fff', fontWeight: '700' }}>
+                          Photo
+                        </ThemedText>
+                      </>
+                    )}
+                  </Pressable>
+                </ThemedView>
+              ))}
+            </View>
+          )}
+
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
-          ) : visibleTasks.length === 0 ? (
+          ) : visibleTasks.length === 0 && followUps.length === 0 ? (
             <ThemedView type="backgroundElement" style={styles.empty}>
               <Ionicons name="checkmark-done-circle-outline" size={40} color={theme.textSecondary} />
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
@@ -377,6 +518,8 @@ export default function PendingScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
     </View>
   );
 }
@@ -402,6 +545,32 @@ const styles = StyleSheet.create({
   },
   chipText: { fontSize: 13, fontWeight: '600' },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: Spacing.two },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginBottom: Spacing.two,
+  },
+  followCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    marginBottom: Spacing.two,
+    borderLeftWidth: 3,
+    borderLeftColor: AMBER,
+  },
+  followThumb: { width: 48, height: 48, borderRadius: Spacing.two },
+  followBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    backgroundColor: GREEN,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+  },
   empty: {
     marginTop: Spacing.four,
     padding: Spacing.five,

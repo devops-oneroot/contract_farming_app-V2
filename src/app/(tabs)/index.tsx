@@ -30,7 +30,7 @@ import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, PackageOfPractices, PopStep } from '@/lib/api';
+import { api, CatalogCrop, Crop, isContract, PackageOfPractices, PopStep } from '@/lib/api';
 
 // App accent + surface colors (green agri theme).
 const GREEN = Brand.primary;
@@ -139,7 +139,8 @@ function FarmerHome() {
       setAgronomistName(me?.agronomist?.name ?? null);
       setAgronomistMobile(me?.agronomist?.mobile ?? null);
       // Fetch each distinct crop's Package of Practices (for upcoming milestones).
-      const names = [...new Set(data.map((c) => c.name))];
+      // Regular crops follow no schedule, so they are not worth a request.
+      const names = [...new Set(data.filter(isContract).map((c) => c.name))];
       const results = await Promise.all(names.map((n) => api.getPractices(n).catch(() => null)));
       const map: Record<string, PackageOfPractices> = {};
       results.forEach((p, i) => {
@@ -174,7 +175,7 @@ function FarmerHome() {
     const now = Date.now();
     const out: { date: Date; op: string; crop: string; cropId: string; dop: string; step: PopStep }[] = [];
     for (const c of crops) {
-      if (!c.dop) continue;
+      if (!isContract(c) || !c.dop) continue;
       const pop = pops[c.name.toLowerCase()];
       if (!pop) continue;
       const base = new Date(c.dop);
@@ -205,11 +206,20 @@ function FarmerHome() {
       },
     });
 
-  const openPractices = (item: Crop) =>
+  // Only contract crops have a schedule to open.
+  const openPractices = (item: Crop) => {
+    if (!isContract(item)) {
+      Alert.alert(
+        'No Package of Practices',
+        `${item.name} is registered as regular farming, so it has no cultivation schedule. Ask your agronomist to move it to contract farming if you want one.`
+      );
+      return;
+    }
     router.push({
       pathname: '/practices',
       params: { cropId: item._id, crop: item.name, dop: item.dop ?? '', variety: item.variety ?? '' },
     });
+  };
 
   const catalogImage = (name: string) =>
     catalog.find((c) => c.name.toLowerCase() === name.toLowerCase())?.imageUrl;
@@ -352,7 +362,10 @@ function FarmerHome() {
               contentContainerStyle={styles.cropRow}>
               {crops.map((item) => {
                 const img = catalogImage(item.name);
-                const stage = cropStage(item.dop, pops[item.name.toLowerCase()]);
+                const contract = isContract(item);
+                const stage = contract
+                  ? cropStage(item.dop, pops[item.name.toLowerCase()])
+                  : { label: 'Regular', color: Brand.secondary };
                 const details =
                   [
                     item.variety || null,

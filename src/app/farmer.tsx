@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
@@ -17,15 +18,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, PackageOfPractices } from '@/lib/api';
+import { api, CatalogCrop, Crop, FarmingType, isContract, PackageOfPractices, ProductSale } from '@/lib/api';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GREEN = Brand.primary;
 const AMBER = Brand.accent;
+
+const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 function fmt(d: Date) {
   return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
@@ -70,8 +74,14 @@ export default function FarmerScreen() {
   // Add a crop, or fill in a planting date that was left blank at onboarding.
   // `cropSheet` is null when closed, holds the crop being edited, or 'new' to add.
   const [cropSheet, setCropSheet] = useState<Crop | 'new' | null>(null);
+  const [sales, setSales] = useState<ProductSale[]>([]);
+  // Which sale line we are taking the follow-up after-photo for.
+  const [afterFor, setAfterFor] = useState<{ saleId: string; index: number } | null>(null);
+  const [uploadingAfter, setUploadingAfter] = useState(false);
   const [pickedCrop, setPickedCrop] = useState<CatalogCrop | null>(null);
   const [cropVariety, setCropVariety] = useState('');
+  const [cropType, setCropType] = useState<FarmingType>('contract');
+  const [cropArea, setCropArea] = useState('');
   const [cropDop, setCropDop] = useState<Date | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -79,20 +89,23 @@ export default function FarmerScreen() {
     useCallback(() => {
     (async () => {
       try {
-        const [cropList, farmerUser, catalogList] = await Promise.all([
+        const [cropList, farmerUser, catalogList, saleList] = await Promise.all([
           api.listCrops(farmerId),
           api.getUser(farmerId).catch(() => null),
           api.listCropCatalog().catch(() => []),
+          api.listProductSales({ farmerId }).catch(() => []),
         ]);
         setCrops(cropList);
         setCatalog(catalogList);
+        setSales(saleList);
         setGeofenceCount(farmerUser?.geofence?.length ?? 0);
         if (farmerUser) {
           setFarmerName(farmerUser.name ?? '');
           setFarmerMobile(farmerUser.mobile ?? '');
         }
         // Fetch the schedule for each distinct crop to compute the current stage.
-        const names = [...new Set(cropList.map((c) => c.name))];
+        // Regular crops have no schedule, so they are not worth a request.
+        const names = [...new Set(cropList.filter(isContract).map((c) => c.name))];
         const results = await Promise.all(
           names.map((n) => api.getPractices(n).catch(() => null))
         );
@@ -137,9 +150,39 @@ export default function FarmerScreen() {
     }
   };
 
+  // Follow-up visit: photograph the crop again and attach it to that sale line.
+  const captureAfter = async (uri: string) => {
+    if (!afterFor) return;
+    const { saleId, index } = afterFor;
+    setAfterFor(null);
+    setUploadingAfter(true);
+    try {
+      let sized = uri;
+      try {
+        const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+          compress: 0.6,
+          format: ImageManipulator.SaveFormat.JPEG,
+        });
+        sized = out.uri;
+      } catch {
+        // never lose the shot because the resize failed
+      }
+      const updated = await api.addAfterPhotos(saleId, [
+        { index, photo: { uri: sized, name: `after_${index}.jpg`, type: 'image/jpeg' } },
+      ]);
+      setSales((ss) => ss.map((s) => (s._id === updated._id ? updated : s)));
+    } catch (e: any) {
+      Alert.alert('Could not save the photo', e?.message || 'Please try again.');
+    } finally {
+      setUploadingAfter(false);
+    }
+  };
+
   const openAddCrop = () => {
     setPickedCrop(null);
     setCropVariety('');
+    setCropType('contract');
+    setCropArea('');
     setCropDop(null);
     setCropSheet('new');
   };
@@ -148,6 +191,8 @@ export default function FarmerScreen() {
   const openEditCrop = (crop: Crop) => {
     setPickedCrop(catalog.find((c) => c.name.toLowerCase() === crop.name.toLowerCase()) ?? null);
     setCropVariety(crop.variety ?? '');
+    setCropType(isContract(crop) ? 'contract' : 'regular');
+    setCropArea(crop.area != null ? String(crop.area) : '');
     setCropDop(crop.dop ? new Date(crop.dop) : null);
     setCropSheet(crop);
   };
@@ -158,24 +203,40 @@ export default function FarmerScreen() {
       Alert.alert('Pick a crop', 'Please choose which crop this farmer is growing.');
       return;
     }
+    if (!cropArea.trim()) {
+      Alert.alert('Area required', 'Please enter how many acres this crop is grown on.');
+      return;
+    }
+    if (!(Number(cropArea) > 0)) {
+      Alert.alert('Check the area', 'Area must be a number greater than 0.');
+      return;
+    }
     setSaving(true);
     try {
+      const contract = cropType === 'contract';
+      // A regular crop follows no schedule, so a planting date would mean nothing.
+      const plantedOn = contract && cropDop ? cropDop.toISOString() : null;
+      const acres = cropArea.trim() ? Number(cropArea) : null;
       if (editingExisting) {
         const updated = await api.updateCrop(cropSheet._id, {
           variety: cropVariety.trim(),
-          dop: cropDop ? cropDop.toISOString() : null,
+          farmingType: cropType,
+          area: acres,
+          dop: plantedOn,
         });
         setCrops((cs) => cs.map((c) => (c._id === updated._id ? updated : c)));
       } else {
         const created = await api.addCrop(farmerId, {
           name: pickedCrop!.name,
           variety: cropVariety.trim(),
-          dop: cropDop ? cropDop.toISOString() : null,
+          farmingType: cropType,
+          area: acres,
+          dop: plantedOn,
         });
         setCrops((cs) => [created, ...cs]);
         // Pull this crop's schedule in so its stage shows straight away.
         const key = created.name.toLowerCase();
-        if (!pops[key]) {
+        if (contract && !pops[key]) {
           const pop = await api.getPractices(created.name).catch(() => null);
           if (pop) setPops((p) => ({ ...p, [key]: pop }));
         }
@@ -247,6 +308,31 @@ export default function FarmerScreen() {
                     <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
                   </ThemedView>
                 </Pressable>
+                {/* Sell a product on the spot, with before/after proof photos. */}
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: '/give-product',
+                      params: { farmerId, farmerName: farmerName || name || '' },
+                    })
+                  }
+                  style={({ pressed }) => pressed && { opacity: 0.85 }}>
+                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                    <View style={[styles.geoIcon, { backgroundColor: Brand.secondary }]}>
+                      <Ionicons name="cart" size={18} color="#fff" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText type="smallBold">Give product</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {sales.length > 0
+                          ? `${sales.length} sold · ${money(sales.reduce((s, x) => s + (x.total ?? 0), 0))}`
+                          : 'Sell on the field with before/after photos'}
+                      </ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </ThemedView>
+                </Pressable>
+
                 <View style={styles.cropsHead}>
                   <ThemedText type="smallBold">Crops ({crops.length})</ThemedText>
                   <Pressable
@@ -268,7 +354,121 @@ export default function FarmerScreen() {
                 </ThemedText>
               </ThemedView>
             }
+            ListFooterComponent={
+              sales.length > 0 ? (
+                <View style={{ marginTop: Spacing.four }}>
+                  <ThemedText type="smallBold" style={{ marginBottom: Spacing.two }}>
+                    Products given ({sales.length})
+                  </ThemedText>
+                  {sales.map((s) => (
+                    <ThemedView key={s._id} type="backgroundElement" style={styles.saleCard}>
+                      <View style={styles.saleTop}>
+                        <View style={{ flex: 1 }}>
+                          <ThemedText type="smallBold">
+                            {s.items.length} product{s.items.length > 1 ? 's' : ''}
+                            {s.cropName ? ` · ${s.cropName}` : ''}
+                          </ThemedText>
+                          <ThemedText type="small" themeColor="textSecondary">
+                            {fmt(new Date(s.soldAt))}
+                            {typeof s.agronomist === 'object' && s.agronomist?.name
+                              ? ` · ${s.agronomist.name}`
+                              : s.agronomistName
+                                ? ` · ${s.agronomistName}`
+                                : ''}
+                          </ThemedText>
+                        </View>
+                        <ThemedText type="smallBold" style={{ color: GREEN }}>
+                          {money(s.total)}
+                        </ThemedText>
+                      </View>
+
+                      {/* Before at handover; after once the waiting period is up. */}
+                      {s.items.map((it, i) => {
+                        const dueAt = s.afterDueAt ? new Date(s.afterDueAt) : null;
+                        const daysLeft = dueAt
+                          ? Math.ceil((dueAt.getTime() - Date.now()) / DAY_MS)
+                          : 0;
+                        const due = !dueAt || daysLeft <= 0;
+                        return (
+                          <View key={it.product} style={styles.saleItem}>
+                            <View style={styles.saleItemHead}>
+                              <ThemedText type="small" style={{ flex: 1 }} numberOfLines={1}>
+                                {it.name}
+                              </ThemedText>
+                              <ThemedText type="small" themeColor="textSecondary">
+                                {it.qty} × {money(it.unitPrice)} = {money(it.lineTotal)}
+                              </ThemedText>
+                            </View>
+                            <View style={styles.salePhotos}>
+                              <View style={{ flex: 1 }}>
+                                {it.beforePhotoUrl ? (
+                                  <Image
+                                    source={{ uri: it.beforePhotoUrl }}
+                                    style={styles.salePhoto}
+                                    contentFit="cover"
+                                  />
+                                ) : (
+                                  <View style={[styles.salePhoto, styles.salePhotoEmpty]} />
+                                )}
+                                <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
+                                  Before
+                                </ThemedText>
+                              </View>
+
+                              <View style={{ flex: 1 }}>
+                                {it.afterPhotoUrl ? (
+                                  <Image
+                                    source={{ uri: it.afterPhotoUrl }}
+                                    style={styles.salePhoto}
+                                    contentFit="cover"
+                                  />
+                                ) : due ? (
+                                  // The wait is over — one tap to capture it.
+                                  <Pressable
+                                    onPress={() => setAfterFor({ saleId: s._id, index: i })}
+                                    disabled={uploadingAfter}
+                                    style={[styles.salePhoto, styles.afterBtn]}>
+                                    {uploadingAfter ? (
+                                      <ActivityIndicator color={GREEN} />
+                                    ) : (
+                                      <>
+                                        <Ionicons name="camera-outline" size={20} color={GREEN} />
+                                        <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                                          Take now
+                                        </ThemedText>
+                                      </>
+                                    )}
+                                  </Pressable>
+                                ) : (
+                                  <View style={[styles.salePhoto, styles.afterWait]}>
+                                    <Ionicons name="time-outline" size={18} color={AMBER} />
+                                    <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
+                                      in {daysLeft}d
+                                    </ThemedText>
+                                  </View>
+                                )}
+                                <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
+                                  After
+                                </ThemedText>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                      {s.notes ? (
+                        <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+                          {s.notes}
+                        </ThemedText>
+                      ) : null}
+                    </ThemedView>
+                  ))}
+                </View>
+              ) : null
+            }
             renderItem={({ item }) => {
+              // Only contract crops have a Package of Practices. A regular crop's card
+              // opens its details instead, so the agronomist can still correct them.
+              const contract = isContract(item);
               const pop = pops[item.name.toLowerCase()];
               const dayN = dayNumber(item.dop);
               const doneCount = (item.progress ?? []).filter((p) => p.done).length;
@@ -277,15 +477,17 @@ export default function FarmerScreen() {
               return (
                 <Pressable
                   onPress={() =>
-                    router.push({
-                      pathname: '/practices',
-                      params: {
-                        cropId: item._id,
-                        crop: item.name,
-                        dop: item.dop ?? '',
-                        variety: item.variety ?? '',
-                      },
-                    })
+                    contract
+                      ? router.push({
+                          pathname: '/practices',
+                          params: {
+                            cropId: item._id,
+                            crop: item.name,
+                            dop: item.dop ?? '',
+                            variety: item.variety ?? '',
+                          },
+                        })
+                      : openEditCrop(item)
                   }
                   style={({ pressed }) => pressed && { opacity: 0.7 }}>
                   <ThemedView type="backgroundElement" style={styles.card}>
@@ -301,8 +503,13 @@ export default function FarmerScreen() {
                         <ThemedText type="smallBold">
                           {item.name}
                           {item.variety ? ` · ${item.variety}` : ''}
+                          {item.area != null ? ` · ${item.area} acres` : ''}
                         </ThemedText>
-                        {item.dop ? (
+                        {!contract ? (
+                          <ThemedText type="small" themeColor="textSecondary">
+                            Regular farming
+                          </ThemedText>
+                        ) : item.dop ? (
                           <ThemedText type="small" themeColor="textSecondary">
                             Planted {fmt(new Date(item.dop))}
                           </ThemedText>
@@ -321,29 +528,39 @@ export default function FarmerScreen() {
                       <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
                     </View>
 
-                    <View style={styles.statsRow}>
-                      <Stat
-                        label="Days"
-                        value={
-                          dayN == null
-                            ? '—'
-                            : dayN < 1
-                              ? '0'
-                              : pop
-                                ? `${Math.min(dayN, pop.durationDays)}/${pop.durationDays}`
-                                : String(dayN)
-                        }
-                        theme={theme}
-                      />
-                      <Stat label="Tasks done" value={total ? `${doneCount}/${total}` : String(doneCount)} theme={theme} />
-                    </View>
+                    {contract ? (
+                      <>
+                        <View style={styles.statsRow}>
+                          <Stat
+                            label="Days"
+                            value={
+                              dayN == null
+                                ? '—'
+                                : dayN < 1
+                                  ? '0'
+                                  : pop
+                                    ? `${Math.min(dayN, pop.durationDays)}/${pop.durationDays}`
+                                    : String(dayN)
+                            }
+                            theme={theme}
+                          />
+                          <Stat label="Tasks done" value={total ? `${doneCount}/${total}` : String(doneCount)} theme={theme} />
+                        </View>
 
-                    <View style={[styles.stageBox, { backgroundColor: theme.background }]}>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        Current stage
-                      </ThemedText>
-                      <ThemedText type="smallBold">{currentStage(pop, dayN)}</ThemedText>
-                    </View>
+                        <View style={[styles.stageBox, { backgroundColor: theme.background }]}>
+                          <ThemedText type="small" themeColor="textSecondary">
+                            Current stage
+                          </ThemedText>
+                          <ThemedText type="smallBold">{currentStage(pop, dayN)}</ThemedText>
+                        </View>
+                      </>
+                    ) : (
+                      <View style={[styles.stageBox, { backgroundColor: theme.background }]}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          No Package of Practices — tap to edit details
+                        </ThemedText>
+                      </View>
+                    )}
                   </ThemedView>
                 </Pressable>
               );
@@ -488,32 +705,73 @@ export default function FarmerScreen() {
               </>
             )}
 
+            {/* Area for THIS crop — a farmer's crops sit on different plots. */}
             <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-              Date of planting (D.O.P)
+              Area (acres) <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
             </ThemedText>
-            <Pressable
-              onPress={() => setShowDatePicker(true)}
-              style={[styles.input, styles.dateBtn, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText style={{ color: cropDop ? theme.text : theme.textSecondary }}>
-                {cropDop ? fmt(cropDop) : 'Select the planting date'}
-              </ThemedText>
-              <Ionicons name="calendar-outline" size={18} color={theme.textSecondary} />
-            </Pressable>
-            {showDatePicker && (
-              <DateTimePicker
-                value={cropDop ?? new Date()}
-                mode="date"
-                maximumDate={new Date()}
-                onChange={(event, selected) => {
-                  if (Platform.OS !== 'ios') setShowDatePicker(false);
-                  if (event.type === 'set' && selected) setCropDop(selected);
-                }}
-              />
-            )}
-            {Platform.OS === 'ios' && showDatePicker && (
-              <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
-                <ThemedText type="linkPrimary">Done</ThemedText>
-              </Pressable>
+            <TextInput
+              value={cropArea}
+              onChangeText={setCropArea}
+              keyboardType="decimal-pad"
+              placeholder="e.g. 2.5"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+
+            {/* Contract or regular — decides whether this crop gets a schedule at all. */}
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+              Farming type
+            </ThemedText>
+            <View style={styles.chipWrap}>
+              {(['contract', 'regular'] as FarmingType[]).map((t) => {
+                const on = cropType === t;
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={() => setCropType(t)}
+                    style={[
+                      styles.chip,
+                      { backgroundColor: on ? GREEN : theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
+                    ]}>
+                    <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
+                      {t === 'contract' ? 'Contract farming' : 'Regular farmer'}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* D.O.P — contract crops only: it is what the schedule counts from. */}
+            {cropType === 'contract' && (
+              <>
+                <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+                  Date of planting (D.O.P)
+                </ThemedText>
+                <Pressable
+                  onPress={() => setShowDatePicker(true)}
+                  style={[styles.input, styles.dateBtn, { backgroundColor: theme.backgroundElement }]}>
+                  <ThemedText style={{ color: cropDop ? theme.text : theme.textSecondary }}>
+                    {cropDop ? fmt(cropDop) : 'Select the planting date'}
+                  </ThemedText>
+                  <Ionicons name="calendar-outline" size={18} color={theme.textSecondary} />
+                </Pressable>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={cropDop ?? new Date()}
+                    mode="date"
+                    maximumDate={new Date()}
+                    onChange={(event, selected) => {
+                      if (Platform.OS !== 'ios') setShowDatePicker(false);
+                      if (event.type === 'set' && selected) setCropDop(selected);
+                    }}
+                  />
+                )}
+                {Platform.OS === 'ios' && showDatePicker && (
+                  <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
+                    <ThemedText type="linkPrimary">Done</ThemedText>
+                  </Pressable>
+                )}
+              </>
             )}
 
             <Pressable
@@ -531,6 +789,8 @@ export default function FarmerScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
     </ThemedView>
   );
 }
@@ -596,6 +856,29 @@ const styles = StyleSheet.create({
   geoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2e9e5b', alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.four, borderRadius: Spacing.three, alignItems: 'center' },
+  saleCard: { padding: Spacing.three, borderRadius: Spacing.three, marginBottom: Spacing.two },
+  saleTop: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  saleItem: { marginTop: Spacing.three },
+  saleItemHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  salePhotos: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.three },
+  salePhoto: { width: '100%', height: 96, borderRadius: Spacing.two },
+  salePhotoEmpty: { backgroundColor: 'rgba(127,127,127,0.15)' },
+  afterBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: GREEN,
+    backgroundColor: Brand.primarySurface,
+  },
+  afterWait: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    backgroundColor: Brand.accentSurface,
+  },
+  salePhotoLabel: { textAlign: 'center', marginTop: Spacing.one, fontSize: 11 },
   card: { padding: Spacing.three, borderRadius: Spacing.three, gap: Spacing.three },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   emoji: { fontSize: 28 },

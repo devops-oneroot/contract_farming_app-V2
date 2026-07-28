@@ -27,7 +27,6 @@ const AGGREGATOR = { tint: Brand.secondary, well: Brand.secondarySurface };
 const ACTIONS: Action[] = [
   { label: 'Onboard Aggregator', desc: 'Register new aggregators', icon: 'business-outline', route: '/onboard-aggregator', ...AGGREGATOR },
   { label: 'Onboard Farmer', desc: 'Register new farmers', icon: 'person-add-outline', route: '/onboard-farmer', ...FARMER },
-  { label: 'Meet Aggregator', desc: 'Start or schedule meeting', icon: 'calendar-outline', route: '/meet-aggregator', ...AGGREGATOR },
 ];
 
 export default function AgentActionsScreen() {

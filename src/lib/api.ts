@@ -75,6 +75,44 @@ export type CallLog = {
   createdAt: string;
 };
 
+/**
+ * A product the agronomist sold to a farmer on the farm, with before/after
+ * photos of the crop. Names and prices are snapshots taken at sale time.
+ */
+export type ProductSaleItem = {
+  product: string;
+  name: string;
+  unit: string;
+  imageUrl: string;
+  qty: number;
+  unitPrice: number;
+  lineTotal: number;
+  /** Taken at handover. */
+  beforePhotoUrl: string;
+  /** Taken on the follow-up visit a week later; empty until then. */
+  afterPhotoUrl: string;
+  afterPhotoAt: string | null;
+};
+
+export type ProductSale = {
+  _id: string;
+  agronomist: string | AgronomistRef | null;
+  agronomistName: string;
+  farmer: string;
+  farmerName: string;
+  farmerMobile: string;
+  crop: string | null;
+  cropName: string;
+  items: ProductSaleItem[];
+  total: number;
+  location: { latitude: number | null; longitude: number | null };
+  notes: string;
+  soldAt: string;
+  /** When the follow-up after-photos become collectable. */
+  afterDueAt: string | null;
+  createdAt: string;
+};
+
 export type Visit = {
   _id: string;
   agronomist: string | AgronomistRef | null;
@@ -142,12 +180,23 @@ export type CropVerification = {
   verifiedAt: string;
 };
 
+/**
+ * How a crop is grown with us. Only `contract` crops follow a Package of
+ * Practices; a `regular` crop is registered and tracked but has no schedule,
+ * and therefore no planting date to count one from.
+ */
+export type FarmingType = 'contract' | 'regular';
+
+/** Crops saved before this field existed have no value — treat those as contract. */
+export const isContract = (c: { farmingType?: FarmingType }) => c.farmingType !== 'regular';
+
 export type Crop = {
   _id: string;
   user: string;
   name: string;
   variety: string;
-  dop: string | null; // Date of Planting (ISO string)
+  farmingType?: FarmingType;
+  dop: string | null; // Date of Planting (ISO string) — contract crops only
   area: number | null; // area in acres (optional)
   quantity: number | null;
   unit: string;
@@ -268,9 +317,20 @@ export const api = {
   // Agronomist onboards/links a farmer (and optionally a crop) to themselves.
   onboardFarmer: (
     agronomistId: string,
-    body: { name: string; mobile: string; crop?: string; variety?: string; dop?: string | null }
+    body: {
+      name: string;
+      mobile: string;
+      /** One entry per crop — a farmer usually grows several, each on its own area. */
+      crops?: {
+        name: string;
+        variety?: string;
+        farmingType?: FarmingType;
+        area?: number | null;
+        dop?: string | null;
+      }[];
+    }
   ) =>
-    request<{ farmer: Farmer; crop: Crop | null; alreadyExisted: boolean }>(
+    request<{ farmer: Farmer; crops: Crop[]; crop: Crop | null; alreadyExisted: boolean }>(
       `/api/users/agronomists/${agronomistId}/farmers`,
       { method: 'POST', body: JSON.stringify(body) }
     ),
@@ -323,6 +383,79 @@ export const api = {
   listVisits: (agronomistId: string, since?: string) =>
     request<Visit[]>(`/api/visits?agronomist=${agronomistId}${since ? `&since=${encodeURIComponent(since)}` : ''}`),
 
+  // Products sold on the farm. Filter by farmer (their history) or agronomist
+  // (own sales). `pendingAfter` returns only sales whose follow-up after-photos
+  // are due but not yet taken.
+  listProductSales: (params: {
+    farmerId?: string;
+    agronomistId?: string;
+    since?: string;
+    pendingAfter?: boolean;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.farmerId) q.set('farmer', params.farmerId);
+    if (params.agronomistId) q.set('agronomist', params.agronomistId);
+    if (params.since) q.set('since', params.since);
+    if (params.pendingAfter) q.set('pendingAfter', '1');
+    return request<ProductSale[]>(`/api/product-sales?${q.toString()}`);
+  },
+
+  // Sell products to a farmer on the field, with before/after photos of the crop.
+  // Names and line totals are resolved server-side from the catalog.
+  createProductSale: async (body: {
+    agronomistId: string;
+    farmerId: string;
+    cropId?: string | null;
+    /** Each product carries its own before-photo; the after comes a week later. */
+    items: {
+      productId: string;
+      qty: number;
+      unitPrice: number;
+      beforePhoto?: { uri: string; name: string; type: string };
+    }[];
+    latitude?: number | null;
+    longitude?: number | null;
+    notes?: string;
+  }): Promise<ProductSale> => {
+    const form = new FormData();
+    form.append('agronomistId', body.agronomistId);
+    form.append('farmerId', body.farmerId);
+    if (body.cropId) form.append('cropId', body.cropId);
+    // Multipart carries the photos, so the basket travels as a JSON string.
+    form.append(
+      'items',
+      JSON.stringify(body.items.map(({ productId, qty, unitPrice }) => ({ productId, qty, unitPrice })))
+    );
+    // Photos ride alongside, keyed by the line's position in that same array.
+    body.items.forEach((it, i) => {
+      if (it.beforePhoto) form.append(`before_${i}`, it.beforePhoto as any);
+    });
+    if (body.latitude != null) form.append('latitude', String(body.latitude));
+    if (body.longitude != null) form.append('longitude', String(body.longitude));
+    if (body.notes) form.append('notes', body.notes);
+    const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save the sale');
+    return data as ProductSale;
+  },
+
+  // The follow-up visit: attach after-photos to a sale already recorded.
+  // `index` is the product's position in that sale's `items`.
+  addAfterPhotos: async (
+    saleId: string,
+    photos: { index: number; photo: { uri: string; name: string; type: string } }[]
+  ): Promise<ProductSale> => {
+    const form = new FormData();
+    photos.forEach(({ index, photo }) => form.append(`after_${index}`, photo as any));
+    const res = await fetch(`${BASE_URL}/api/product-sales/${saleId}/after-photos`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save the photo');
+    return data as ProductSale;
+  },
+
   // Record a visit with a farm photo + a photo with the farmer + GPS location.
   createVisit: async (body: {
     agronomistId: string;
@@ -366,6 +499,7 @@ export const api = {
     body: {
       name: string;
       variety?: string;
+      farmingType?: FarmingType;
       dop?: string | null;
       area?: number | null;
       quantity?: number | null;
@@ -378,7 +512,7 @@ export const api = {
   // Package of Practices schedule is counted from.
   updateCrop: (
     cropId: string,
-    body: { variety?: string; dop?: string | null; area?: number | null }
+    body: { variety?: string; farmingType?: FarmingType; dop?: string | null; area?: number | null }
   ) => request<Crop>(`/api/crops/${cropId}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   // Master crop catalog (admin-defined) shown in the Add-Crop picker.
