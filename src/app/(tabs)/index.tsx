@@ -26,15 +26,15 @@ import { AgronomistHome } from '@/components/agronomist-home';
 import { CallFab } from '@/components/call-fab';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CatalogCrop, Crop, PackageOfPractices, PopStep } from '@/lib/api';
 
 // App accent + surface colors (green agri theme).
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
 
 // Home banner carousel images.
 const BANNER_IMAGES = [

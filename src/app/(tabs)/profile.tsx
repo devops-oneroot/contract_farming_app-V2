@@ -18,16 +18,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 
 const LOGO = require('@/assets/images/logo.png');
-const GREEN = '#2e9e5b';
+const GREEN = Brand.primary;
 const GREEN_DARK = '#2f7d46';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN_SURFACE = Brand.surface;
 
 export default function ProfileScreen() {
   const theme = useTheme();

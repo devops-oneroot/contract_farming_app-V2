@@ -2,21 +2,25 @@ import { Image } from 'expo-image';
 import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Brand } from '@/constants/theme';
+
 const LOGO = require('@/assets/images/logo.png');
 
 // Branded auth palette (these screens are always light — no theme dependence).
+// Warm neutrals rather than the old green tints, matching Brand.surface elsewhere.
 export const AUTH = {
-  bg: '#E9F0E6',
+  bg: Brand.surface,
   card: '#ffffff',
-  input: '#EAF1E9',
+  input: '#F2EDE6',
   btn: '#153a1f',
   gold: '#B8912E',
   heading: '#12212b',
   subtitle: '#67788a',
   label: '#1a1a1a',
-  border: '#cdd8cd',
-  danger: '#e5484d',
-  green: '#2e9e5b',
+  border: '#E2D9CD',
+  danger: Brand.danger,
+  green: Brand.primary,
+  clay: Brand.secondary,
 };
 
 // Shared branded header (logo + "SINCE 1994" + title + subtitle) over a white card.

@@ -7,17 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, Crop, Farmer, PackageOfPractices, PopStep } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
-const GREEN = '#2e9e5b';
-const AMBER = '#f59e0b';
-const RED = '#e5484d';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const AMBER = Brand.accent;
+const RED = Brand.danger;
+const GREEN_SURFACE = Brand.surface;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Agronomist verification state for today's step.
@@ -32,10 +32,16 @@ type Task = {
   farmer: string;
   farmerId: string;
   farmerMobile: string;
+  /** False when this farmer has no farm boundary drawn yet — the card flags it. */
+  hasBoundary: boolean;
   step: PopStep;
   details: string;
   status: TaskStatus;
 };
+
+// A boundary needs at least 3 corners to be a polygon — matches the farmer detail
+// and profile screens, so "set" means the same thing everywhere.
+const MIN_BOUNDARY_CORNERS = 3;
 
 // Agronomist "Pending": TODAY's Package-of-Practices step for each mapped
 // farmer's crop, with whether the farmer has completed it (uploaded the day's
@@ -104,6 +110,7 @@ export default function PendingScreen() {
               farmer: farmer.name,
               farmerId: farmer._id,
               farmerMobile: farmer.mobile,
+              hasBoundary: (farmer.geofenceCount ?? 0) >= MIN_BOUNDARY_CORNERS,
               step: s,
               details: s.details,
               status,
@@ -146,6 +153,15 @@ export default function PendingScreen() {
         stepCategory: t.step.category,
         stepProducts: JSON.stringify(t.step.products ?? []),
       },
+    } as never);
+  };
+
+  // Draw this farmer's farm boundary — offered from the sheet when it is missing.
+  const openBoundary = (t: Task) => {
+    setSheetTask(null);
+    router.push({
+      pathname: '/geofence',
+      params: { userId: t.farmerId, name: t.farmer },
     } as never);
   };
 
@@ -243,6 +259,8 @@ export default function PendingScreen() {
                       DAY
                     </ThemedText>
                     <ThemedText style={[styles.dayBadgeNum, { color: b.color }]}>{t.dayN}</ThemedText>
+                    {/* Red light on the day badge: this farm has no boundary yet. */}
+                    {!t.hasBoundary && <View style={styles.boundaryDot} />}
                   </View>
                   <View style={{ flex: 1 }}>
                     <ThemedText type="smallBold" numberOfLines={1}>
@@ -330,6 +348,30 @@ export default function PendingScreen() {
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
                 </Pressable>
+
+                {/* Only offered while this farmer still has no boundary drawn. */}
+                {!sheetTask.hasBoundary && (
+                  <Pressable
+                    onPress={() => openBoundary(sheetTask)}
+                    style={({ pressed }) => [
+                      styles.sheetOption,
+                      styles.sheetOptionAlert,
+                      pressed && { opacity: 0.85 },
+                    ]}>
+                    <View style={[styles.sheetIcon, { backgroundColor: `${RED}18` }]}>
+                      <Ionicons name="map-outline" size={22} color={RED} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText type="smallBold" style={{ fontSize: 15 }}>
+                        Farm boundary
+                      </ThemedText>
+                      <ThemedText type="small" style={{ color: RED }}>
+                        Not set · tap to draw it
+                      </ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                  </Pressable>
+                )}
               </>
             )}
           </Pressable>
@@ -374,6 +416,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: Spacing.three,
     borderRadius: Spacing.four,
+  },
+  // Red light on the corner of the day badge — farm boundary still missing.
+  boundaryDot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
+    backgroundColor: RED,
+    borderWidth: 2,
+    borderColor: '#fff', // ring separates the light from the badge behind it
+    shadowColor: RED,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 3,
+    elevation: 3,
   },
   dayBadge: {
     width: 52,
@@ -429,6 +488,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(46,158,91,0.25)',
   },
+  sheetOptionAlert: { borderColor: `${RED}55` },
   sheetIcon: {
     width: 46,
     height: 46,

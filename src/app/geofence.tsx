@@ -9,12 +9,12 @@ import { WebView } from 'react-native-webview';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import { api, GeoPoint, User } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
+const GREEN = Brand.primary;
 // Tutorial video shown before drawing (raw Cloudinary MP4 so we can slow it down).
 // Leave '' to show the illustrated guide instead.
 const TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dz23idc5e/video/upload/video_yzz2b7.mp4';

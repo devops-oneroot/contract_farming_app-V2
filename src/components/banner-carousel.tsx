@@ -2,14 +2,14 @@ import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 
 const IMAGES = [
   require('@/assets/images/img4.png'),
   require('@/assets/images/img2.png'),
   require('@/assets/images/img3.png'),
 ];
-const GREEN = '#2e9e5b';
+const GREEN = Brand.primary;
 
 // Full-bleed auto-advancing image slider. `pad` = the parent's horizontal
 // padding, so the slider can break out to the full screen width.

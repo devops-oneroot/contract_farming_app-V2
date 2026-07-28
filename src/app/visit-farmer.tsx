@@ -3,11 +3,12 @@ import { Image } from 'expo-image';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -16,17 +17,51 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api } from '@/lib/api';
+import { api, GeoPoint, User } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
+
+// Satellite map showing where the farm is, the boundary if one was drawn, and
+// the agronomist's own position so they can see which way to go.
+function navMapHtml(target: { lat: number; lng: number }, boundary: GeoPoint[]) {
+  return `<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>html,body,#map{height:100%;margin:0;padding:0}</style></head>
+<body><div id="map"></div><script>
+  var T = ${JSON.stringify(target)};
+  var B = ${JSON.stringify(boundary)};
+  var map = L.map('map',{zoomControl:false,attributionControl:false}).setView([T.lat,T.lng], 16);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20}).addTo(map);
+  var layers = [];
+  if (B.length >= 3) {
+    var poly = L.polygon(B.map(function(p){return [p.latitude,p.longitude]}),
+      {color:'#2e9e5b',weight:3,fillOpacity:0.25}).addTo(map);
+    layers.push(poly);
+    map.fitBounds(poly.getBounds(),{padding:[30,30]});
+  } else {
+    layers.push(L.marker([T.lat,T.lng]).addTo(map));
+  }
+  var meDot=null;
+  // Called from React Native whenever a GPS fix arrives.
+  function showMe(lat,lng){
+    if(meDot){map.removeLayer(meDot);}
+    meDot=L.circleMarker([lat,lng],{radius:7,color:'#fff',weight:3,fillColor:'#1e88e5',fillOpacity:1}).addTo(map);
+    // Frame both the farm and the agronomist so the direction is obvious.
+    map.fitBounds(L.latLngBounds([[lat,lng],[T.lat,T.lng]]).pad(0.3));
+  }
+</script></body></html>`;
+}
 
 export default function VisitFarmerScreen() {
   const theme = useTheme();
@@ -51,6 +86,9 @@ export default function VisitFarmerScreen() {
     params.lat && params.lng ? { lat: Number(params.lat), lng: Number(params.lng) } : null
   );
   const [locating, setLocating] = useState(false);
+  // The farmer's own record — needed for the farm's location and boundary.
+  const [farm, setFarm] = useState<User | null>(null);
+  const mapRef = useRef<WebView>(null);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +110,45 @@ export default function VisitFarmerScreen() {
       }
     })();
   }, []);
+
+  // Load the farmer so we know where their farm actually is.
+  useEffect(() => {
+    if (!params.farmerId) return;
+    api.getUser(params.farmerId).then(setFarm).catch(() => {});
+  }, [params.farmerId]);
+
+  const boundary = farm?.geofence ?? [];
+
+  // Where to navigate to: the centre of the drawn boundary is the most accurate
+  // point, falling back to the farmer's registered location.
+  const target = useMemo(() => {
+    if (boundary.length >= 3) {
+      return {
+        lat: boundary.reduce((s, p) => s + p.latitude, 0) / boundary.length,
+        lng: boundary.reduce((s, p) => s + p.longitude, 0) / boundary.length,
+      };
+    }
+    if (farm?.location?.latitude != null && farm?.location?.longitude != null) {
+      return { lat: farm.location.latitude, lng: farm.location.longitude };
+    }
+    return null;
+  }, [farm, boundary]);
+
+  // Push our position into the map each time a fix arrives.
+  useEffect(() => {
+    if (coords && mapRef.current) {
+      mapRef.current.injectJavaScript(`showMe(${coords.lat},${coords.lng});true;`);
+    }
+  }, [coords, target]);
+
+  // Hand off to the device's maps app for actual turn-by-turn navigation.
+  const openNavigation = () => {
+    if (!target) return;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${target.lat},${target.lng}&travelmode=driving`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert('Could not open maps', 'No maps app is available on this device.')
+    );
+  };
 
   // Photo comes from the in-app camera (expo-camera) — no external camera app,
   // so no Android activity-recreation crash. We upload the capture directly.
@@ -170,6 +247,42 @@ export default function VisitFarmerScreen() {
               {locating && <ActivityIndicator size="small" color={GREEN} />}
             </View>
 
+            {/* Where the farm is, and a hand-off to turn-by-turn navigation. */}
+            {target ? (
+              <View style={styles.navCard}>
+                <View style={styles.mapWrap}>
+                  <WebView
+                    ref={mapRef}
+                    originWhitelist={['*']}
+                    source={{ html: navMapHtml(target, boundary) }}
+                    style={styles.map}
+                    scrollEnabled={false}
+                    javaScriptEnabled
+                  />
+                </View>
+                <Pressable
+                  onPress={openNavigation}
+                  style={({ pressed }) => [styles.navBtn, pressed && { opacity: 0.85 }]}>
+                  <Ionicons name="navigate" size={18} color="#fff" />
+                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                    Navigate to farm
+                  </ThemedText>
+                </Pressable>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.navNote}>
+                  {boundary.length >= 3
+                    ? 'Green outline is the farm boundary; the blue dot is you.'
+                    : "Using the farmer's registered location — no boundary drawn yet."}
+                </ThemedText>
+              </View>
+            ) : farm ? (
+              <View style={styles.locCard}>
+                <Ionicons name="alert-circle-outline" size={18} color={Brand.accent} />
+                <ThemedText type="small" style={{ flex: 1 }}>
+                  No farm location saved for this farmer, so navigation isn&apos;t available.
+                </ThemedText>
+              </View>
+            ) : null}
+
             {/* Photos */}
             <View style={styles.photoRow}>
               {renderPhotoSlot(farmPhoto, 'Farm photo', 'farm', 'leaf-outline')}
@@ -213,6 +326,25 @@ export default function VisitFarmerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // Navigation card: map preview + "Navigate to farm".
+  navCard: { marginTop: Spacing.three, gap: Spacing.two },
+  mapWrap: {
+    height: 200,
+    borderRadius: Spacing.four,
+    overflow: 'hidden',
+    backgroundColor: '#dfe6df',
+  },
+  map: { flex: 1 },
+  navBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    backgroundColor: GREEN,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.four,
+  },
+  navNote: { textAlign: 'center' },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Linking } from 'react-native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -15,32 +15,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { Aggregator, api, Farmer } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const CLAY = Brand.secondary; // aggregators — the buyer/market side
+const GREEN_SURFACE = Brand.surface;
 
 type TabKey = 'farmers' | 'aggregators';
 
-// Matches a name or a phone number. Digits-only comparison for the number so that a search for
-// "9900" still finds "+91 99007 68505" however it was typed in.
-const digits = (s: string) => s.replace(/\D/g, '');
-
-function matches(query: string, ...fields: (string | undefined | null)[]) {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const qDigits = digits(q);
-  return fields.some((f) => {
-    if (!f) return false;
-    if (f.toLowerCase().includes(q)) return true;
-    return qDigits.length > 0 && digits(f).includes(qDigits);
-  });
-}
+// Wait this long after the last keystroke before asking the server, so typing a
+// name doesn't fire a request per character.
+const SEARCH_DEBOUNCE_MS = 300;
 
 export default function OnboardedScreen() {
   const theme = useTheme();
@@ -54,40 +44,49 @@ export default function OnboardedScreen() {
   const [aggregators, setAggregators] = useState<Aggregator[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
 
-  const load = useCallback(async () => {
-    if (!user) return;
-    try {
-      const [f, a] = await Promise.all([
-        api.listAgronomistFarmers(user._id).catch(() => []),
-        api.listAggregators(user._id).catch(() => []),
-      ]);
-      setFarmers(f);
-      setAggregators(a);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
+  // Debounce the box; `search` is what actually gets sent to the server.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(query.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query]);
 
+  // Responses can land out of order once typing outruns the network, so only the
+  // newest request is allowed to write to state.
+  const reqId = useRef(0);
+
+  const load = useCallback(
+    async (q: string) => {
+      if (!user) return;
+      const id = ++reqId.current;
+      try {
+        const [f, a] = await Promise.all([
+          api.listAgronomistFarmers(user._id, q).catch(() => []),
+          api.listAggregators(user._id, q).catch(() => []),
+        ]);
+        if (id !== reqId.current) return; // a newer search already superseded this one
+        setFarmers(f);
+        setAggregators(a);
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    },
+    [user]
+  );
+
+  // Runs on focus and again whenever the debounced search changes while focused.
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      load(search);
+    }, [load, search])
   );
 
   const call = (mobile: string) => Linking.openURL(`tel:${mobile}`).catch(() => {});
 
-  const shownFarmers = useMemo(
-    () => farmers.filter((f) => matches(query, f.name, f.mobile)),
-    [farmers, query]
-  );
-  const shownAggregators = useMemo(
-    () => aggregators.filter((a) => matches(query, a.name, a.mobile, a.company)),
-    [aggregators, query]
-  );
-
-  const list = tab === 'farmers' ? shownFarmers : shownAggregators;
-  const searching = query.trim().length > 0;
+  // Already filtered by the server — these are exactly what the query returned.
+  const list = tab === 'farmers' ? farmers : aggregators;
+  const searching = search.length > 0;
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
@@ -111,7 +110,7 @@ export default function OnboardedScreen() {
             returnKeyType="search"
             style={[styles.searchInput, { color: theme.text }]}
           />
-          {searching && (
+          {query.length > 0 && (
             <Pressable onPress={() => setQuery('')} hitSlop={10}>
               <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
             </Pressable>
@@ -122,12 +121,14 @@ export default function OnboardedScreen() {
         <View style={styles.segment}>
           {(['farmers', 'aggregators'] as TabKey[]).map((k) => {
             const on = tab === k;
-            const count = k === 'farmers' ? shownFarmers.length : shownAggregators.length;
+            const count = k === 'farmers' ? farmers.length : aggregators.length;
+            // Farmers are green (crops), aggregators terracotta (the buyer side).
+            const tint = k === 'farmers' ? GREEN : CLAY;
             return (
               <Pressable
                 key={k}
                 onPress={() => setTab(k)}
-                style={[styles.segBtn, on && { backgroundColor: GREEN }]}>
+                style={[styles.segBtn, on && { backgroundColor: tint }]}>
                 <ThemedText type="smallBold" style={{ color: on ? '#fff' : theme.textSecondary, textTransform: 'capitalize' }}>
                   {k} ({count})
                 </ThemedText>
@@ -139,18 +140,18 @@ export default function OnboardedScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
+          refreshControl={<RefreshControl refreshing={false} onRefresh={() => load(search)} />}>
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
           ) : list.length === 0 ? (
             <ThemedView type="backgroundElement" style={styles.empty}>
               <Ionicons name="people-outline" size={40} color={theme.textSecondary} />
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-                {searching ? `No ${tab} match “${query.trim()}”.` : `No ${tab} onboarded yet.`}
+                {searching ? `No ${tab} match “${search}”.` : `No ${tab} onboarded yet.`}
               </ThemedText>
             </ThemedView>
           ) : tab === 'farmers' ? (
-            shownFarmers.map((f) => (
+            farmers.map((f) => (
               // Opens the farmer detail screen: farm boundary, edit info, and their crops.
               <Pressable
                 key={f._id}
@@ -166,6 +167,28 @@ export default function OnboardedScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     {f.mobile}
                   </ThemedText>
+                  {/* Did this agronomist register them, or were they handed over? */}
+                  {(() => {
+                    const mine = !!f.onboardedBy && f.onboardedBy === user?._id;
+                    return (
+                      <View
+                        style={[
+                          styles.originChip,
+                          { borderColor: mine ? GREEN : Brand.secondary },
+                        ]}>
+                        <Ionicons
+                          name={mine ? 'person-add-outline' : 'swap-horizontal-outline'}
+                          size={11}
+                          color={mine ? GREEN : Brand.secondary}
+                        />
+                        <ThemedText
+                          type="small"
+                          style={{ color: mine ? GREEN : Brand.secondary, fontWeight: '700', fontSize: 11 }}>
+                          {mine ? 'Onboarded by you' : 'Assigned to you'}
+                        </ThemedText>
+                      </View>
+                    );
+                  })()}
                 </View>
                 <Pressable
                   onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
@@ -177,10 +200,10 @@ export default function OnboardedScreen() {
               </Pressable>
             ))
           ) : (
-            shownAggregators.map((a) => (
+            aggregators.map((a) => (
               <View key={a._id} style={styles.card}>
                 <View style={styles.aggIcon}>
-                  <Ionicons name="business" size={20} color={GREEN} />
+                  <Ionicons name="business" size={20} color={CLAY} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <ThemedText type="smallBold" numberOfLines={1}>
@@ -253,11 +276,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  // Outline chip — states the farmer's origin without competing with their name.
+  originChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+  },
   aggIcon: {
     width: 44,
     height: 44,
     borderRadius: Spacing.three,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: Brand.secondarySurface,
     alignItems: 'center',
     justifyContent: 'center',
   },

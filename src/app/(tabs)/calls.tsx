@@ -6,15 +6,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CallLog } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
 
 // Group a day's calls under a heading like "Today" / "Yesterday" / "12 Jul".
 function dayLabel(iso: string) {

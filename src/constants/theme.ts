@@ -26,6 +26,40 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+/**
+ * Brand palette — "Earth & Leaf". One source of truth; screens must not
+ * re-declare these as local hex constants.
+ *
+ * The colours carry meaning, so the app reads at a glance:
+ *   primary   (green)      farmers, crops, growth, primary actions
+ *   secondary (terracotta) aggregators — the market/buyer side of the app
+ *   accent    (amber)      pending, awaiting verification
+ *   danger    (red)        errors, and things missing that block work
+ *
+ * `surface` is a warm neutral rather than a green tint: with every screen
+ * washed green, the green stopped meaning anything.
+ */
+export const Brand = {
+  primary: '#2E9E5B',
+  primaryDark: '#1F7A43',
+  primarySurface: '#E7F5EC',
+
+  secondary: '#D97742',
+  secondaryDark: '#B85C2E',
+  secondarySurface: '#FBEEE6',
+
+  accent: '#F2A93B',
+  accentSurface: '#FEF3E0',
+
+  danger: '#E5484D',
+  dangerSurface: '#FDECEC',
+
+  /** Screen background — warm sand. */
+  surface: '#FBF7F2',
+  card: '#FFFFFF',
+  ink: '#1F2A24',
+} as const;
+
 export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */

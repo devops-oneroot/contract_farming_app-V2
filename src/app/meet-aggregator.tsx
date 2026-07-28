@@ -16,14 +16,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { Aggregator, api } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+// Aggregators are the buyer/market side of the app, not crops — terracotta.
+const CLAY = Brand.secondary;
+const GREEN_SURFACE = Brand.surface;
 
 function formatDateTime(d: Date) {
   return d.toLocaleString(undefined, {
@@ -121,10 +122,10 @@ export default function MeetAggregatorScreen() {
                       onPress={() => setSelected(on ? null : a)}
                       style={[
                         styles.aggRow,
-                        { backgroundColor: theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
+                        { backgroundColor: theme.backgroundElement, borderColor: on ? CLAY : 'transparent' },
                       ]}>
                       <View style={styles.aggIcon}>
-                        <Ionicons name="business" size={18} color={GREEN} />
+                        <Ionicons name="business" size={18} color={CLAY} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <ThemedText type="smallBold">{a.name}</ThemedText>
@@ -132,7 +133,7 @@ export default function MeetAggregatorScreen() {
                           {[a.company, a.mobile].filter(Boolean).join(' · ')}
                         </ThemedText>
                       </View>
-                      {on && <Ionicons name="checkmark-circle" size={20} color={GREEN} />}
+                      {on && <Ionicons name="checkmark-circle" size={20} color={CLAY} />}
                     </Pressable>
                   );
                 })}
@@ -195,14 +196,14 @@ export default function MeetAggregatorScreen() {
               <Pressable
                 onPress={() => submit('now')}
                 disabled={saving}
-                style={[styles.actBtn, { backgroundColor: GREEN, opacity: saving ? 0.6 : 1 }]}>
+                style={[styles.actBtn, { backgroundColor: CLAY, opacity: saving ? 0.6 : 1 }]}>
                 {saving ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.actText}>Start now</ThemedText>}
               </Pressable>
               <Pressable
                 onPress={() => submit('schedule')}
                 disabled={saving}
                 style={[styles.actBtn, styles.actBtnOutline, { opacity: saving ? 0.6 : 1 }]}>
-                <ThemedText style={[styles.actText, { color: GREEN }]}>Schedule</ThemedText>
+                <ThemedText style={[styles.actText, { color: CLAY }]}>Schedule</ThemedText>
               </Pressable>
             </View>
           </ScrollView>
@@ -242,7 +243,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(217,119,66,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -251,6 +252,6 @@ const styles = StyleSheet.create({
   error: { color: '#e5484d', marginTop: Spacing.two },
   actions: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.five },
   actBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.four, borderRadius: Spacing.three },
-  actBtnOutline: { borderWidth: 1.5, borderColor: GREEN, backgroundColor: 'transparent' },
+  actBtnOutline: { borderWidth: 1.5, borderColor: CLAY, backgroundColor: 'transparent' },
   actText: { color: '#fff', fontWeight: '800', fontSize: 15 },
 });

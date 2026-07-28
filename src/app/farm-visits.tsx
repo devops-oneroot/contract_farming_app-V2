@@ -5,17 +5,18 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { Farmer, Visit, api } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
 
 // Straight-line distance (km) between two lat/lng points.
 function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -37,6 +38,56 @@ function fmtDist(km: number | null) {
 
 type Row = Farmer & { distance: number | null; visited: boolean };
 
+// Map of every farmer around the agronomist. Green pins are still to visit,
+// grey ones are already done today. Tapping a pin posts its id back to RN.
+function farmersMapHtml(
+  pins: { id: string; name: string; lat: number; lng: number; visited: boolean; dist: string }[],
+  me: { lat: number; lng: number } | null
+) {
+  return `<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html,body,#map{height:100%;margin:0;padding:0}
+  .lbl{font-family:sans-serif;font-size:13px;font-weight:700}
+  .go{display:inline-block;margin-top:6px;background:#2e9e5b;color:#fff;padding:6px 12px;
+      border-radius:14px;font-family:sans-serif;font-size:12px;font-weight:700;text-decoration:none}
+</style></head><body>
+<div id="map"></div><script>
+  var PINS = ${JSON.stringify(pins)};
+  var ME = ${JSON.stringify(me)};
+  var map = L.map('map',{zoomControl:false,attributionControl:false});
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:20}).addTo(map);
+
+  var bounds = [];
+  PINS.forEach(function(p){
+    var colour = p.visited ? '#8a8f98' : '#2e9e5b';
+    var m = L.circleMarker([p.lat,p.lng],
+      {radius:10,color:'#fff',weight:3,fillColor:colour,fillOpacity:1}).addTo(map);
+    var html = '<div class="lbl">'+p.name+'</div><div>'+p.dist+'</div>'
+      + (p.visited ? '<div style="color:#8a8f98">Visited today</div>'
+                   : '<a class="go" href="#" onclick="pick(\\''+p.id+'\\');return false;">Start visit</a>');
+    m.bindPopup(html);
+    bounds.push([p.lat,p.lng]);
+  });
+
+  if (ME) {
+    L.circleMarker([ME.lat,ME.lng],{radius:7,color:'#fff',weight:3,fillColor:'#1e88e5',fillOpacity:1})
+      .addTo(map).bindPopup('<div class="lbl">You are here</div>');
+    bounds.push([ME.lat,ME.lng]);
+  }
+
+  if (bounds.length > 1) map.fitBounds(L.latLngBounds(bounds).pad(0.2));
+  else if (bounds.length === 1) map.setView(bounds[0], 15);
+  else map.setView([12.97,77.59], 10);
+
+  function pick(id){
+    if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({farmerId:id}));
+  }
+</script></body></html>`;
+}
+
 export default function FarmVisitsScreen() {
   const theme = useTheme();
   const scheme = useColorScheme();
@@ -49,6 +100,8 @@ export default function FarmVisitsScreen() {
   const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
   const [tab, setTab] = useState<'remaining' | 'visited'>('remaining');
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
+  const [showIncomplete, setShowIncomplete] = useState(false);
+  const [showMap, setShowMap] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const startOfToday = () => {
@@ -95,9 +148,11 @@ export default function FarmVisitsScreen() {
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = farmers.map((f) => {
-      const hasLoc = f.location?.latitude != null && f.location?.longitude != null;
+      // farmPoint is the boundary centre (or registered location) — `location`
+      // alone is empty for virtually every farmer.
+      const p = f.farmPoint;
       const distance =
-        me && hasLoc ? distanceKm(me, { lat: f.location.latitude!, lng: f.location.longitude! }) : null;
+        me && p ? distanceKm(me, { lat: p.latitude, lng: p.longitude }) : null;
       return { ...f, distance, visited: !!visitsByFarmer[f._id] };
     });
     // Nearest first; farmers without a distance go last.
@@ -110,10 +165,40 @@ export default function FarmVisitsScreen() {
     return out;
   }, [farmers, me, visitsByFarmer]);
 
+  // Farmers whose record is still missing a boundary or a crop — worth fixing
+  // while the agronomist is out on visits and standing on the farm.
+  const incomplete = useMemo(
+    () =>
+      farmers
+        .map((f) => ({
+          farmer: f,
+          needsBoundary: (f.geofenceCount ?? 0) < 3,
+          needsCrop: (f.cropCount ?? 0) < 1,
+        }))
+        .filter((x) => x.needsBoundary || x.needsCrop),
+    [farmers]
+  );
+
   const remaining = rows.filter((r) => !r.visited);
   const visited = rows.filter((r) => r.visited);
   const list = tab === 'remaining' ? remaining : visited;
   const nearest = remaining[0];
+
+  // Everyone we can actually place on the map.
+  const pins = useMemo(
+    () =>
+      rows
+        .filter((r) => r.farmPoint)
+        .map((r) => ({
+          id: r._id,
+          name: r.name,
+          lat: r.farmPoint!.latitude,
+          lng: r.farmPoint!.longitude,
+          visited: r.visited,
+          dist: fmtDist(r.distance),
+        })),
+    [rows]
+  );
 
   const startVisit = (f: Farmer) =>
     router.push({
@@ -150,9 +235,11 @@ export default function FarmVisitsScreen() {
           </View>
         </View>
 
-        {/* Nearest suggestion */}
+        {/* Nearest suggestion — opens the map of every farmer around you. */}
         {tab === 'remaining' && nearest && (
-          <Pressable onPress={() => startVisit(nearest)} style={styles.nearestCard}>
+          <Pressable
+            onPress={() => setShowMap(true)}
+            style={({ pressed }) => [styles.nearestCard, pressed && { opacity: 0.9 }]}>
             <Ionicons name="navigate" size={22} color="#fff" />
             <View style={{ flex: 1 }}>
               <ThemedText style={styles.nearestLabel}>Nearest farmer</ThemedText>
@@ -161,7 +248,29 @@ export default function FarmVisitsScreen() {
               </ThemedText>
             </View>
             <View style={styles.startPill}>
-              <ThemedText style={styles.startPillText}>Start visit</ThemedText>
+              <ThemedText style={styles.startPillText}>
+                {pins.length > 0 ? 'View map' : 'Start visit'}
+              </ThemedText>
+            </View>
+          </Pressable>
+        )}
+
+        {/* Farmers still missing a boundary or a crop. */}
+        {incomplete.length > 0 && (
+          <Pressable
+            onPress={() => setShowIncomplete(true)}
+            style={({ pressed }) => [styles.needsCard, pressed && { opacity: 0.85 }]}>
+            <Ionicons name="alert-circle" size={22} color={Brand.secondary} />
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold" style={{ color: Brand.secondary }}>
+                {incomplete.length} farmer{incomplete.length > 1 ? 's' : ''} need details
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Farm boundary or crop still missing
+              </ThemedText>
+            </View>
+            <View style={styles.needsPill}>
+              <ThemedText style={styles.needsPillText}>View</ThemedText>
             </View>
           </Pressable>
         )}
@@ -236,6 +345,122 @@ export default function FarmVisitsScreen() {
           )}
         </ScrollView>
       </SafeAreaView>
+
+      {/* All farmers around you. Tap a pin to start that visit. */}
+      <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
+        <View style={{ flex: 1, backgroundColor: theme.background }}>
+          <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+            <View style={styles.topBar}>
+              <Pressable onPress={() => setShowMap(false)} hitSlop={10}>
+                <Ionicons name="close" size={26} color={theme.text} />
+              </Pressable>
+              <ThemedText type="smallBold">Farmers near you ({pins.length})</ThemedText>
+              <View style={{ width: 26 }} />
+            </View>
+
+            {pins.length === 0 ? (
+              <ThemedView type="backgroundElement" style={[styles.empty, { margin: Spacing.four }]}>
+                <Ionicons name="map-outline" size={40} color={theme.textSecondary} />
+                <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+                  None of your farmers have a farm boundary or location saved yet, so there is
+                  nothing to show on the map.
+                </ThemedText>
+              </ThemedView>
+            ) : (
+              <WebView
+                originWhitelist={['*']}
+                source={{ html: farmersMapHtml(pins, me) }}
+                style={{ flex: 1 }}
+                javaScriptEnabled
+                onMessage={(e) => {
+                  try {
+                    const { farmerId } = JSON.parse(e.nativeEvent.data);
+                    const f = rows.find((r) => r._id === farmerId);
+                    if (f) {
+                      setShowMap(false);
+                      startVisit(f);
+                    }
+                  } catch {
+                    // ignore malformed messages
+                  }
+                }}
+              />
+            )}
+
+            <View style={styles.legend}>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: GREEN }]} />
+                <ThemedText type="small" themeColor="textSecondary">To visit</ThemedText>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#8a8f98' }]} />
+                <ThemedText type="small" themeColor="textSecondary">Visited today</ThemedText>
+              </View>
+              <View style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: '#1e88e5' }]} />
+                <ThemedText type="small" themeColor="textSecondary">You</ThemedText>
+              </View>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
+
+      {/* Farmers needing details — tap one to open their record and fix it. */}
+      <Modal
+        visible={showIncomplete}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowIncomplete(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setShowIncomplete(false)}>
+          <Pressable style={[styles.detailSheet, { backgroundColor: theme.background }]} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+            <ThemedText type="subtitle">Needs details</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.three }}>
+              Tap a farmer to draw their boundary or add a crop.
+            </ThemedText>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {incomplete.map(({ farmer: f, needsBoundary, needsCrop }) => (
+                <Pressable
+                  key={f._id}
+                  onPress={() => {
+                    setShowIncomplete(false);
+                    router.push({
+                      pathname: '/farmer',
+                      params: { farmerId: f._id, name: f.name },
+                    } as never);
+                  }}
+                  style={({ pressed }) => [styles.needsRow, pressed && { opacity: 0.85 }]}>
+                  <View style={styles.needsAvatar}>
+                    <ThemedText style={styles.needsAvatarText}>
+                      {f.name?.charAt(0)?.toUpperCase() ?? '?'}
+                    </ThemedText>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="smallBold" numberOfLines={1}>{f.name}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">{f.mobile}</ThemedText>
+                    <View style={styles.missRow}>
+                      {needsBoundary && (
+                        <View style={styles.missChip}>
+                          <Ionicons name="map-outline" size={10} color={Brand.danger} />
+                          <ThemedText type="small" style={styles.missText}>No boundary</ThemedText>
+                        </View>
+                      )}
+                      {needsCrop && (
+                        <View style={styles.missChip}>
+                          <Ionicons name="leaf-outline" size={10} color={Brand.danger} />
+                          <ThemedText type="small" style={styles.missText}>No crop</ThemedText>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Visit detail — the photos the agronomist captured */}
       <Modal
@@ -329,6 +554,63 @@ const styles = StyleSheet.create({
   nearestName: { color: '#fff', fontSize: 16, fontWeight: '800' },
   startPill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: Spacing.three, paddingVertical: 6, borderRadius: Spacing.four },
   startPillText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  // Map legend.
+  legend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.four,
+    paddingVertical: Spacing.three,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 10, height: 10, borderRadius: 5 },
+  // "N farmers need details" button + the sheet it opens.
+  needsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: Brand.secondarySurface,
+    borderWidth: 1,
+    borderColor: `${Brand.secondary}55`,
+    marginHorizontal: Spacing.four,
+    marginBottom: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.four,
+  },
+  needsPill: {
+    backgroundColor: Brand.secondary,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+    borderRadius: Spacing.four,
+  },
+  needsPillText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  needsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingVertical: Spacing.three,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.08)',
+  },
+  needsAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: Brand.secondarySurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  needsAvatarText: { color: Brand.secondary, fontSize: 17, fontWeight: '700' },
+  missRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  missChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: Brand.dangerSurface,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Spacing.four,
+  },
+  missText: { color: Brand.danger, fontWeight: '700', fontSize: 11 },
   segment: {
     flexDirection: 'row',
     gap: Spacing.two,

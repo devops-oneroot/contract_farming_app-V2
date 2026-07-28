@@ -33,7 +33,10 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR"
-      ]
+      ],
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "web": {
       "output": "static",
@@ -83,6 +86,9 @@
       "eas": {
         "projectId": "9384415d-26e1-4dc5-bc14-0b73e22c68f1"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9384415d-26e1-4dc5-bc14-0b73e22c68f1"
     }
   }
 }

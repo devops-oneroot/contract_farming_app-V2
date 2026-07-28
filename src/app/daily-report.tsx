@@ -16,14 +16,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
 
 type Field = {
   key: 'dailyReport' | 'dailyExpenses' | 'expectedExpensesTomorrow' | 'planOfActionTomorrow';

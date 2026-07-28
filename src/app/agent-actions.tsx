@@ -4,24 +4,30 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
 
 type Action = {
   label: string;
   desc: string;
   icon: keyof typeof Ionicons.glyphMap;
   route: string;
+  /** Green for farmer/crop work, terracotta for the aggregator/buyer side. */
+  tint: string;
+  well: string;
 };
 
+const FARMER = { tint: Brand.primary, well: Brand.primarySurface };
+const AGGREGATOR = { tint: Brand.secondary, well: Brand.secondarySurface };
+
 const ACTIONS: Action[] = [
-  { label: 'Onboard Aggregator', desc: 'Register new aggregators', icon: 'business-outline', route: '/onboard-aggregator' },
-  { label: 'Onboard Farmer', desc: 'Register new farmers', icon: 'person-add-outline', route: '/onboard-farmer' },
-  { label: 'Meet Aggregator', desc: 'Start or schedule meeting', icon: 'calendar-outline', route: '/meet-aggregator' },
+  { label: 'Onboard Aggregator', desc: 'Register new aggregators', icon: 'business-outline', route: '/onboard-aggregator', ...AGGREGATOR },
+  { label: 'Onboard Farmer', desc: 'Register new farmers', icon: 'person-add-outline', route: '/onboard-farmer', ...FARMER },
+  { label: 'Meet Aggregator', desc: 'Start or schedule meeting', icon: 'calendar-outline', route: '/meet-aggregator', ...AGGREGATOR },
 ];
 
 export default function AgentActionsScreen() {
@@ -52,8 +58,8 @@ export default function AgentActionsScreen() {
               key={a.route}
               onPress={() => router.push({ pathname: a.route, params: { role } } as never)}
               style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}>
-              <View style={styles.cardIcon}>
-                <Ionicons name={a.icon} size={24} color={GREEN} />
+              <View style={[styles.cardIcon, { backgroundColor: a.well }]}>
+                <Ionicons name={a.icon} size={24} color={a.tint} />
               </View>
               <View style={{ flex: 1 }}>
                 <ThemedText type="smallBold" style={{ fontSize: 16 }}>

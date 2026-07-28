@@ -15,14 +15,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 
-const GREEN = '#2e9e5b';
-const GREEN_SURFACE = '#E7F5EC';
+// Aggregators are the buyer/market side of the app, not crops — terracotta.
+const CLAY = Brand.secondary;
+const GREEN_SURFACE = Brand.surface;
 
 export default function OnboardAggregatorScreen() {
   const theme = useTheme();
@@ -162,7 +163,7 @@ const styles = StyleSheet.create({
   },
   error: { color: '#e5484d', marginTop: Spacing.two },
   saveBtn: {
-    backgroundColor: GREEN,
+    backgroundColor: CLAY,
     borderRadius: Spacing.three,
     paddingVertical: Spacing.four,
     alignItems: 'center',

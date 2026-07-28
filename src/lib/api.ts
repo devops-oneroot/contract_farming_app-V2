@@ -8,6 +8,20 @@ export type Farmer = {
   mobile: string;
   location: { latitude: number | null; longitude: number | null };
   createdAt: string;
+  /** Corners in this farmer's saved farm boundary; 0 when they have none yet. */
+  geofenceCount?: number;
+  /** Crops this farmer has; 0 when none have been added yet. */
+  cropCount?: number;
+  /**
+   * Where this farm is: centre of the drawn boundary, else the registered
+   * location. Null when neither exists. Used for distance sorting and the map.
+   */
+  farmPoint?: { latitude: number; longitude: number } | null;
+  /**
+   * The agronomist who registered this farmer in the field. Null when an admin
+   * added them from the dashboard — i.e. the farmer was assigned, not onboarded.
+   */
+  onboardedBy?: string | null;
 };
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
@@ -242,9 +256,14 @@ export const api = {
     body: { name?: string; location?: { latitude: number | null; longitude: number | null }; geofence?: GeoPoint[] }
   ) => request<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
-  // Farmers mapped to a specific agronomist.
-  listAgronomistFarmers: (agronomistId: string) =>
-    request<Farmer[]>(`/api/users/agronomists/${agronomistId}/farmers`),
+  // Farmers mapped to a specific agronomist. `search` filters by name/mobile on the
+  // server, so the device never holds the whole roster just to filter it.
+  listAgronomistFarmers: (agronomistId: string, search?: string) =>
+    request<Farmer[]>(
+      `/api/users/agronomists/${agronomistId}/farmers${
+        search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''
+      }`
+    ),
 
   // Agronomist onboards/links a farmer (and optionally a crop) to themselves.
   onboardFarmer: (
@@ -257,8 +276,13 @@ export const api = {
     ),
 
   // ----- Field agent: aggregators / attendance / meetings -----
-  listAggregators: (agronomistId: string) =>
-    request<Aggregator[]>(`/api/aggregators?agronomist=${agronomistId}`),
+  // `search` filters by name/company/mobile on the server.
+  listAggregators: (agronomistId: string, search?: string) =>
+    request<Aggregator[]>(
+      `/api/aggregators?agronomist=${agronomistId}${
+        search?.trim() ? `&search=${encodeURIComponent(search.trim())}` : ''
+      }`
+    ),
   createAggregator: (
     agronomistId: string,
     body: { name: string; mobile: string; company?: string; notes?: string; location?: GeoPoint | { latitude: number | null; longitude: number | null } }
@@ -349,6 +373,13 @@ export const api = {
       notes?: string;
     }
   ) => request<Crop>(`/api/users/${userId}/crops`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // Fill in details left blank at onboarding — usually the planting date the
+  // Package of Practices schedule is counted from.
+  updateCrop: (
+    cropId: string,
+    body: { variety?: string; dop?: string | null; area?: number | null }
+  ) => request<Crop>(`/api/crops/${cropId}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   // Master crop catalog (admin-defined) shown in the Add-Crop picker.
   listCropCatalog: () => request<CatalogCrop[]>('/api/crop-catalog'),
