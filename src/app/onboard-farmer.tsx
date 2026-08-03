@@ -24,6 +24,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CatalogCrop, FarmingType } from '@/lib/api';
+import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -97,8 +98,15 @@ export default function OnboardFarmerScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
 
+  // The conversation is recorded from the moment this screen opens until the
+  // farmer is saved, so it captures exactly what produced the registration.
+  const recorder = useOnboardingRecorder();
+
   useEffect(() => {
     api.listCropCatalog().then(setCatalog).catch(() => {});
+    recorder.begin();
+    // Starting once on mount is the whole point; re-running would restart it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openSheet = () => {
@@ -188,6 +196,19 @@ export default function OnboardFarmerScreen() {
       });
       const farmerId = res.farmer?._id;
       const farmerName = res.farmer?.name ?? name.trim();
+
+      // Stop the moment the farmer is saved, then attach the file. The upload is
+      // not allowed to fail the registration, but a silent failure is worse than
+      // none — the agent is told so the recording can be chased up.
+      if (farmerId) {
+        recorder
+          .finishAndUpload(farmerId)
+          .then((ok) => {
+            if (!ok) Alert.alert('Recording not saved', 'The farmer was registered, but the voice recording could not be uploaded.');
+          })
+          .catch(() => {});
+      }
+
       // Offer to draw the farm boundary right away for the newly-onboarded farmer.
       Alert.alert('Farmer onboarded ✓', 'Mark this farmer’s farm boundary now?', [
         { text: 'Later', style: 'cancel', onPress: () => router.back() },
@@ -222,6 +243,24 @@ export default function OnboardFarmerScreen() {
           </View>
 
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            {/* Never record silently — the agent and the farmer can both see it. */}
+            {recorder.recording ? (
+              <View style={[styles.recBar, { backgroundColor: Brand.dangerSurface }]}>
+                <View style={styles.recDot} />
+                <ThemedText type="small" style={{ flex: 1, color: theme.text }}>
+                  Recording this conversation · {Math.floor(recorder.durationMillis / 60000)}:
+                  {String(Math.floor((recorder.durationMillis % 60000) / 1000)).padStart(2, '0')}
+                </ThemedText>
+              </View>
+            ) : recorder.error || recorder.permitted === false ? (
+              <View style={[styles.recBar, { backgroundColor: Brand.accentSurface }]}>
+                <Ionicons name="mic-off-outline" size={16} color={Brand.accent} />
+                <ThemedText type="small" style={{ flex: 1, color: theme.text }}>
+                  Not recording — {recorder.error ?? 'microphone permission was declined'}.
+                </ThemedText>
+              </View>
+            ) : null}
+
             <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
               Farmer name <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
             </ThemedText>
@@ -485,6 +524,15 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
+  recBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    marginTop: Spacing.one,
+  },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Brand.danger },
   fieldLabel: { marginTop: Spacing.three },
   input: {
     borderRadius: Spacing.two,

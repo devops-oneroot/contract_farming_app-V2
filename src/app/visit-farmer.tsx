@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
@@ -7,6 +7,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  // Core Image, not expo-image: expo-image does not reliably paint a local
+  // file:// preview straight off the camera, which left the slots blank.
+  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -24,11 +27,25 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
 import { api, GeoPoint, User } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
+
+/** Camera frames are 12 MP+; send something a field connection can carry. */
+async function shrink(uri: string) {
+  try {
+    const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+      compress: 0.6,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    return out.uri;
+  } catch {
+    return uri; // never lose the shot because the resize failed
+  }
+}
 
 // Satellite map showing where the farm is, the boundary if one was drawn, and
 // the agronomist's own position so they can see which way to go.
@@ -89,6 +106,15 @@ export default function VisitFarmerScreen() {
   // The farmer's own record — needed for the farm's location and boundary.
   const [farm, setFarm] = useState<User | null>(null);
   const mapRef = useRef<WebView>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const keyboardHeight = useKeyboardHeight();
+  const [notesFocused, setNotesFocused] = useState(false);
+
+  // Scroll once the keyboard's height has actually been added to the content —
+  // scrolling on focus alone races the padding and lands short.
+  useEffect(() => {
+    if (notesFocused && keyboardHeight > 0) scrollRef.current?.scrollToEnd({ animated: true });
+  }, [notesFocused, keyboardHeight]);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +193,11 @@ export default function VisitFarmerScreen() {
     setSaving(true);
     setError(null);
     try {
+      // Shrink here rather than at capture, so the preview never waits on it.
+      const [farmUri, farmerUri] = await Promise.all([
+        farmPhoto ? shrink(farmPhoto) : null,
+        farmerPhoto ? shrink(farmerPhoto) : null,
+      ]);
       await api.createVisit({
         agronomistId: user._id,
         farmerId: params.farmerId,
@@ -174,8 +205,8 @@ export default function VisitFarmerScreen() {
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
-        farmPhoto: farmPhoto ? { uri: farmPhoto, name: 'farm.jpg', type: 'image/jpeg' } : undefined,
-        farmerPhoto: farmerPhoto ? { uri: farmerPhoto, name: 'farmer.jpg', type: 'image/jpeg' } : undefined,
+        farmPhoto: farmUri ? { uri: farmUri, name: 'farm.jpg', type: 'image/jpeg' } : undefined,
+        farmerPhoto: farmerUri ? { uri: farmerUri, name: 'farmer.jpg', type: 'image/jpeg' } : undefined,
       });
       posthog?.capture('farm_visit_logged', { hasFarmPhoto: !!farmPhoto, hasFarmerPhoto: !!farmerPhoto, hasLocation: !!coords });
       Alert.alert('Visit marked ✓', `${params.farmerName ?? 'Farmer'} marked as visited.`, [
@@ -200,8 +231,10 @@ export default function VisitFarmerScreen() {
         {label}
       </ThemedText>
       {uri ? (
-        <Pressable onPress={() => setCameraFor(which)} style={styles.photoWrap}>
-          <Image source={{ uri }} style={styles.photo} contentFit="cover" />
+        <Pressable onPress={() => setCameraFor(which)}>
+          {/* The image sizes itself — a fixed-height parent with overflow:hidden
+              was clipping away everything inside it, preview and all. */}
+          <Image source={{ uri }} style={styles.photo} resizeMode="cover" />
           <View style={styles.retake}>
             <Ionicons name="camera-reverse" size={14} color="#fff" />
             <ThemedText type="small" style={{ color: '#fff', fontWeight: '700' }}>Retake</ThemedText>
@@ -228,7 +261,13 @@ export default function VisitFarmerScreen() {
             <View style={{ width: 26 }} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={scrollRef}
+            // The keyboard draws over the screen rather than resizing it, so the
+            // space it takes has to be added to the content for the last fields
+            // to be reachable at all.
+            contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+            keyboardShouldPersistTaps="handled">
             <ThemedText type="subtitle">{params.farmerName ?? 'Farmer'}</ThemedText>
             {params.farmerMobile ? (
               <ThemedText type="small" themeColor="textSecondary">{params.farmerMobile}</ThemedText>
@@ -299,6 +338,8 @@ export default function VisitFarmerScreen() {
               placeholder="Anything about this visit"
               placeholderTextColor={theme.textSecondary}
               multiline
+              onFocus={() => setNotesFocused(true)}
+              onBlur={() => setNotesFocused(false)}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, minHeight: 80, textAlignVertical: 'top' }]}
             />
 
@@ -326,6 +367,13 @@ export default function VisitFarmerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
   // Navigation card: map preview + "Navigate to farm".
   navCard: { marginTop: Spacing.three, gap: Spacing.two },
   mapWrap: {
@@ -345,13 +393,6 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.four,
   },
   navNote: { textAlign: 'center' },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   locCard: {
     flexDirection: 'row',
@@ -373,8 +414,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
   },
-  photoWrap: { height: 140, borderRadius: Spacing.four, overflow: 'hidden' },
-  photo: { width: '100%', height: '100%' },
+  photo: {
+    width: '100%',
+    height: 140,
+    borderRadius: Spacing.four,
+    backgroundColor: '#d8d8d8', // shows through only while the file is decoding
+  },
   retake: {
     position: 'absolute',
     bottom: 6,

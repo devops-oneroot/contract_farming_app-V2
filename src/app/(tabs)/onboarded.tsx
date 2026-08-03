@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
@@ -92,9 +92,7 @@ export default function OnboardedScreen() {
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.header}>
-          <ThemedText type="subtitle" style={{ fontSize: 22 }}>
-            Onboarded
-          </ThemedText>
+          <ThemedText style={styles.headerTitle}>Onboarded</ThemedText>
         </View>
 
         {/* Search by name or number */}
@@ -238,8 +236,10 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
     paddingHorizontal: Spacing.three,
     backgroundColor: '#fff',
-    borderRadius: Spacing.four,
+    borderRadius: Radius.lg,
+    ...CardShadow,
   },
+  headerTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
   searchInput: { flex: 1, paddingVertical: Spacing.three, fontSize: 15 },
   segment: {
     flexDirection: 'row',
@@ -265,7 +265,8 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     backgroundColor: '#fff',
     padding: Spacing.three,
-    borderRadius: Spacing.four,
+    borderRadius: Radius.lg,
+    ...CardShadow,
   },
   avatar: {
     width: 44,

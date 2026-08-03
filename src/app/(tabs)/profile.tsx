@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -18,11 +19,11 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
+import { Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api } from '@/lib/api';
+import { api, isAgronomist } from '@/lib/api';
 
 const LOGO = require('@/assets/images/logo.png');
 const GREEN = Brand.primary;
@@ -37,7 +38,7 @@ export default function ProfileScreen() {
   const { user, signIn, signOut } = useAuth();
 
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
-  const isFarmer = user?.role !== 'agronomist';
+  const isFarmer = !isAgronomist(user?.role);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
@@ -112,7 +113,9 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <View style={styles.body}>
+      {/* Scrolls so a short phone can still reach Log Out and the footer;
+          `flexGrow` keeps them pinned to the bottom when the content is short. */}
+      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         {/* Account details */}
         <ThemedView style={styles.card}>
           {infoRows.map((r, i) => (
@@ -203,7 +206,7 @@ export default function ProfileScreen() {
         </Pressable>
 
         {/* Footer pinned to bottom */}
-        <View style={[styles.footer, { paddingBottom: BottomTabInset + Spacing.two }]}>
+        <View style={styles.footer}>
           <Image source={LOGO} style={styles.footerLogo} contentFit="contain" />
           <ThemedText type="small" themeColor="textSecondary">
             OneRoot · Contract farming, simplified
@@ -212,7 +215,7 @@ export default function ProfileScreen() {
             v1.0.0
           </ThemedText>
         </View>
-      </View>
+      </ScrollView>
 
       {/* Edit profile — full screen */}
       <Modal
@@ -315,8 +318,14 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   roleText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  body: { flex: 1, paddingHorizontal: Spacing.four, paddingTop: Spacing.four, gap: Spacing.three },
-  card: { borderRadius: Spacing.four, paddingHorizontal: Spacing.three },
+  body: {
+    flexGrow: 1,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.four,
+    gap: Spacing.three,
+    paddingBottom: Spacing.four,
+  },
+  card: { borderRadius: Radius.lg, paddingHorizontal: Spacing.three, ...CardShadow },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.three },
   rowIcon: {
     width: 32,

@@ -26,11 +26,11 @@ import { AgronomistHome } from '@/components/agronomist-home';
 import { CallFab } from '@/components/call-fab';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, isContract, PackageOfPractices, PopStep } from '@/lib/api';
+import { api, CatalogCrop, Crop, isAgronomist, isContract, PackageOfPractices, PopStep } from '@/lib/api';
 
 // App accent + surface colors (green agri theme).
 const GREEN = Brand.primary;
@@ -71,7 +71,7 @@ function cropStage(dop: string | null, pop?: PackageOfPractices): { label: strin
 // Home branches by role: agronomists see the farmer list, farmers see their crops.
 export default function HomeScreen() {
   const { user } = useAuth();
-  if (user?.role === 'agronomist') return <AgronomistHome />;
+  if (isAgronomist(user?.role)) return <AgronomistHome />;
   return <FarmerHome />;
 }
 
@@ -673,16 +673,10 @@ const styles = StyleSheet.create({
   cropRow: { gap: Spacing.three, paddingVertical: Spacing.one, paddingRight: Spacing.four },
   cropCard2: {
     width: 185,
-    borderRadius: Spacing.four,
+    borderRadius: Radius.lg,
     padding: Spacing.four,
     gap: Spacing.two,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,0,0,0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
+    ...CardShadow,
   },
   cropCardIcon: { width: 40, height: 40, borderRadius: Spacing.two },
   cropCardEmoji: { fontSize: 34 },
@@ -712,7 +706,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  milestoneCard: { borderRadius: Spacing.three, padding: Spacing.one },
+  milestoneCard: { borderRadius: Radius.lg, padding: Spacing.one, ...CardShadow },
   milestoneRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
@@ -69,9 +69,7 @@ export default function CallsScreen() {
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.header}>
-          <ThemedText type="subtitle" style={{ fontSize: 22 }}>
-            Call Logs
-          </ThemedText>
+          <ThemedText style={styles.headerTitle}>Call Logs</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             Calls you made to farmers
           </ThemedText>
@@ -140,12 +138,13 @@ export default function CallsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, paddingBottom: Spacing.three },
+  headerTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: Spacing.three },
   sectionLabel: { fontSize: 13, color: GREEN, marginTop: Spacing.two },
   empty: {
     marginTop: Spacing.four,
     padding: Spacing.five,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.lg,
     alignItems: 'center',
     gap: Spacing.three,
   },
@@ -155,7 +154,8 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     backgroundColor: '#fff',
     padding: Spacing.three,
-    borderRadius: Spacing.four,
+    borderRadius: Radius.lg,
+    ...CardShadow,
   },
   avatar: {
     width: 44,

@@ -73,6 +73,26 @@ export default function AgentActionsScreen() {
           ))}
 
           <ThemedText type="smallBold" style={styles.sectionTitle}>
+            My Day
+          </ThemedText>
+          <Pressable
+            onPress={() => router.push('/tracking' as never)}
+            style={({ pressed }) => [styles.taskLink, pressed && { opacity: 0.85 }]}>
+            <View style={styles.cardIcon}>
+              <Ionicons name="navigate-outline" size={24} color={GREEN} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold" style={{ fontSize: 16 }}>
+                Start / end tracking
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                Record your route and see today's distance
+              </ThemedText>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+          </Pressable>
+
+          <ThemedText type="smallBold" style={styles.sectionTitle}>
             My Assigned Tasks
           </ThemedText>
           <Pressable

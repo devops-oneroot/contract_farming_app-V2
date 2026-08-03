@@ -4,7 +4,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,6 +27,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
 import { api, Crop, Product } from '@/lib/api';
 
@@ -94,6 +95,15 @@ export default function GiveProductScreen() {
   const [cameraFor, setCameraFor] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
+  const confirmScrollRef = useRef<ScrollView>(null);
+  const keyboardHeight = useKeyboardHeight();
+  const [notesFocused, setNotesFocused] = useState(false);
+
+  // Scroll once the keyboard's height has actually been added to the content —
+  // scrolling on focus alone races the padding and lands short.
+  useEffect(() => {
+    if (notesFocused && keyboardHeight > 0) confirmScrollRef.current?.scrollToEnd({ animated: true });
+  }, [notesFocused, keyboardHeight]);
   const [error, setError] = useState<string | null>(null);
 
   const crop = crops.find((c) => c._id === cropId) ?? null;
@@ -405,7 +415,13 @@ export default function GiveProductScreen() {
               )}
             </>
           ) : (
-            <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              ref={confirmScrollRef}
+              // The keyboard draws over the screen rather than resizing it, so the
+              // space it takes has to be added to the content for the last fields
+              // to be reachable at all.
+              contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+              keyboardShouldPersistTaps="handled">
               {/* One card per product: quantity, the price agreed on the field, and
                   its own before/after proof of the crop. */}
               <View style={styles.confirmHead}>
@@ -501,6 +517,8 @@ export default function GiveProductScreen() {
                 placeholder="Anything worth recording about this sale"
                 placeholderTextColor={theme.textSecondary}
                 multiline
+                onFocus={() => setNotesFocused(true)}
+                onBlur={() => setNotesFocused(false)}
                 style={[...inputStyle, styles.notes]}
               />
 

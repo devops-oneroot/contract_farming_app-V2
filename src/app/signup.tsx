@@ -84,6 +84,9 @@ export default function SignUpScreen() {
         {roleBtn('farmer', 'Farmer')}
         {roleBtn('agronomist', 'Agronomist')}
       </View>
+      {/* A senior does everything an agronomist does, and answers the crop
+          disease reports field agents send in — so it sits on its own row. */}
+      <View style={authStyles.roleRow}>{roleBtn('senior_agronomist', 'Senior Agronomist')}</View>
 
       <Text style={authStyles.label}>Name</Text>
       <TextInput

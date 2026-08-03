@@ -1,6 +1,15 @@
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000';
 
-export type Role = 'farmer' | 'agronomist';
+export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
+
+/**
+ * A senior agronomist does everything an agronomist does, and additionally
+ * answers disease reports. Anywhere asking "is this an agronomist?" must use
+ * this rather than comparing to 'agronomist'.
+ */
+export const isAgronomist = (role?: Role) =>
+  role === 'agronomist' || role === 'senior_agronomist';
+export const isSenior = (role?: Role) => role === 'senior_agronomist';
 
 export type Farmer = {
   _id: string;
@@ -111,6 +120,75 @@ export type ProductSale = {
   /** When the follow-up after-photos become collectable. */
   afterDueAt: string | null;
   createdAt: string;
+};
+
+/** A senior agronomist's answer to a disease report. */
+export type DiseaseReply = {
+  senior: string;
+  seniorName: string;
+  advice: string;
+  at: string;
+};
+
+/** A crop that looked diseased, sent up for advice. */
+export type DiseaseReport = {
+  _id: string;
+  reporter: string | { _id: string; name: string; mobile: string; role: Role };
+  reporterName: string;
+  farmer: string | null;
+  farmerName: string;
+  farmerMobile: string;
+  crop: string | null;
+  cropName: string;
+  /** Null when sent to whoever is free rather than one named senior. */
+  sentTo: string | null;
+  sentToName: string;
+  photos: string[];
+  note: string;
+  location: { latitude: number | null; longitude: number | null };
+  status: 'open' | 'answered';
+  replies: DiseaseReply[];
+  answeredAt: string | null;
+  createdAt: string;
+};
+
+/** One GPS fix along a tracked route. */
+export type TrackPoint = {
+  latitude: number;
+  longitude: number;
+  at: string; // ISO
+  accuracy?: number | null;
+};
+
+/** A tracked work session: START to END, with the route walked in between. */
+export type TrackingSession = {
+  _id: string;
+  user: string | { _id: string; name: string; mobile: string; role: string };
+  userName: string;
+  role: string;
+  /** 'no_field' is a declared day in, with a reason instead of a route. */
+  kind: 'tracked' | 'no_field';
+  reason: string;
+  startAt: string;
+  endAt: string | null;
+  startPhotoUrl: string;
+  endPhotoUrl: string;
+  /** Omitted by the list endpoints — only the single-session fetch carries it. */
+  points?: TrackPoint[];
+  distanceKm: number;
+  createdAt: string;
+};
+
+/** A day's work, measured from what was recorded rather than typed by hand. */
+export type DayStats = {
+  distanceKm: number;
+  trackedMinutes: number;
+  sessions: number;
+  newFarmers: number;
+  oldFarmers: number;
+  visits: number;
+  sales: number;
+  salesTotal: number;
 };
 
 export type Visit = {
@@ -382,6 +460,170 @@ export const api = {
   // List an agronomist's visits, optionally only those on/after `since` (ISO).
   listVisits: (agronomistId: string, since?: string) =>
     request<Visit[]>(`/api/visits?agronomist=${agronomistId}${since ? `&since=${encodeURIComponent(since)}` : ''}`),
+
+  // ----- Crop disease reports -----
+  // Photographed in the field and sent to every senior agronomist for advice.
+  createDiseaseReport: async (body: {
+    reporterId: string;
+    farmerId?: string | null;
+    cropId?: string | null;
+    /** Used when there is no Crop record to take the name from. */
+    cropName?: string;
+    /** Omit to send to whoever is free — every senior sees it. */
+    sentToId?: string | null;
+    note?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    photos: { uri: string; name: string; type: string }[];
+  }): Promise<DiseaseReport> => {
+    const form = new FormData();
+    form.append('reporterId', body.reporterId);
+    if (body.farmerId) form.append('farmerId', body.farmerId);
+    if (body.cropId) form.append('cropId', body.cropId);
+    if (body.cropName) form.append('cropName', body.cropName);
+    if (body.sentToId) form.append('sentToId', body.sentToId);
+    if (body.note) form.append('note', body.note);
+    if (body.latitude != null) form.append('latitude', String(body.latitude));
+    if (body.longitude != null) form.append('longitude', String(body.longitude));
+    body.photos.forEach((p) => form.append('photos', p as any));
+    const res = await fetch(`${BASE_URL}/api/disease-reports`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not send the report');
+    return data as DiseaseReport;
+  },
+
+  /**
+   * `reporterId` for an agent's own. `seniorId` for a senior's inbox — what was
+   * addressed to them plus anything sent to whoever is free.
+   */
+  listDiseaseReports: (params?: {
+    reporterId?: string;
+    seniorId?: string;
+    farmerId?: string;
+    status?: 'open' | 'answered';
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.reporterId) q.set('reporter', params.reporterId);
+    if (params?.seniorId) q.set('senior', params.seniorId);
+    if (params?.farmerId) q.set('farmer', params.farmerId);
+    if (params?.status) q.set('status', params.status);
+    const qs = q.toString();
+    return request<DiseaseReport[]>(`/api/disease-reports${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Senior agronomists a report can be addressed to. */
+  listSeniorAgronomists: () =>
+    request<{ _id: string; name: string; mobile: string }[]>('/api/disease-reports/seniors'),
+
+  getDiseaseReport: (id: string) => request<DiseaseReport>(`/api/disease-reports/${id}`),
+
+  /** A senior answers; the reporting agent is notified. */
+  replyToDiseaseReport: (id: string, seniorId: string, advice: string) =>
+    request<DiseaseReport>(`/api/disease-reports/${id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ seniorId, advice }),
+    }),
+
+  // ----- Day tracking -----
+  // Start carries a photo of where the day began, so it is multipart.
+  startTracking: async (
+    userId: string,
+    role?: string,
+    photo?: { uri: string; name: string; type: string }
+  ): Promise<TrackingSession> => {
+    const form = new FormData();
+    form.append('userId', userId);
+    if (role) form.append('role', role);
+    if (photo) form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/tracking/start`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not start tracking');
+    return data as TrackingSession;
+  },
+
+  /** A day with no field work — a reason and a photo showing why. */
+  noFieldDay: async (
+    userId: string,
+    reason: string,
+    role?: string,
+    photo?: { uri: string; name: string; type: string }
+  ): Promise<TrackingSession> => {
+    const form = new FormData();
+    form.append('userId', userId);
+    form.append('reason', reason);
+    if (role) form.append('role', role);
+    if (photo) form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/tracking/no-field`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save');
+    return data as TrackingSession;
+  },
+
+  // Returns the running total rather than echoing the route back to the phone.
+  addTrackPoints: (sessionId: string, points: TrackPoint[]) =>
+    request<{ _id: string; distanceKm: number; pointCount: number; added: number }>(
+      `/api/tracking/${sessionId}/points`,
+      { method: 'POST', body: JSON.stringify({ points }) }
+    ),
+
+  // Stop carries the end photo alongside any points still buffered, so the
+  // points travel as a JSON string in the multipart body.
+  stopTracking: async (
+    sessionId: string,
+    points?: TrackPoint[],
+    photo?: { uri: string; name: string; type: string }
+  ): Promise<TrackingSession> => {
+    const form = new FormData();
+    form.append('points', JSON.stringify(points ?? []));
+    if (photo) form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/tracking/${sessionId}/stop`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not stop tracking');
+    return data as TrackingSession;
+  },
+
+  /** The session still running for this user, if any — null when none is. */
+  currentTracking: (userId: string) =>
+    request<TrackingSession | null>(`/api/tracking/current?user=${encodeURIComponent(userId)}`),
+
+  listTracking: (userId: string, from?: string, to?: string) => {
+    const q = new URLSearchParams({ user: userId });
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    return request<TrackingSession[]>(`/api/tracking?${q.toString()}`);
+  },
+
+  /** Today's measured numbers for one agent. `date` is yyyy-mm-dd. */
+  getDayStats: (userId: string, date?: string) => {
+    const q = new URLSearchParams({ user: userId });
+    if (date) q.set('date', date);
+    return request<DayStats>(`/api/day-stats?${q.toString()}`);
+  },
+
+  /** Attach the conversation recorded while this farmer was onboarded. */
+  saveOnboardingAudio: async (
+    farmerId: string,
+    audio: { uri: string; name: string; type: string },
+    seconds?: number
+  ) => {
+    const form = new FormData();
+    form.append('audio', audio as any);
+    if (seconds) form.append('seconds', String(seconds));
+    const res = await fetch(`${BASE_URL}/api/users/${farmerId}/onboarding-audio`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not upload the recording');
+    return data as { ok: boolean; onboardingAudioUrl: string };
+  },
+
+  // Every visit made to one farmer, newest first — their visit history.
+  listFarmerVisits: (farmerId: string) =>
+    request<Visit[]>(`/api/visits?farmer=${encodeURIComponent(farmerId)}`),
 
   // Products sold on the farm. Filter by farmer (their history) or agronomist
   // (own sales). `pendingAfter` returns only sales whose follow-up after-photos

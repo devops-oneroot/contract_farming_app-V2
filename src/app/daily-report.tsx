@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,7 +20,7 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api } from '@/lib/api';
+import { api, DayStats } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -57,6 +57,14 @@ export default function DailyReportScreen() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The measured half of the report: distance from the tracked route, farmers
+  // from what was recorded. Shown so the agent sees what is being filed with it.
+  const [stats, setStats] = useState<DayStats | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    api.getDayStats(user._id).then(setStats).catch(() => {});
+  }, [user]);
 
   const set = (k: Field['key'], v: string) => setValues((prev) => ({ ...prev, [k]: v }));
 
@@ -107,8 +115,31 @@ export default function DailyReportScreen() {
             <ThemedText type="subtitle" style={{ fontSize: 20 }}>
               {today}
             </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.two }}>
-              Fill your end-of-day report. The admin sees this on the dashboard.
+            {/* Measured, not typed — filed automatically with the report. */}
+            {stats && (
+              <View style={styles.statGrid}>
+                {[
+                  { label: 'Distance', value: `${stats.distanceKm} km` },
+                  { label: 'Tracked', value: `${Math.floor(stats.trackedMinutes / 60)}h ${stats.trackedMinutes % 60}m` },
+                  { label: 'New onboarded', value: String(stats.newFarmers) },
+                  { label: 'Existing met', value: String(stats.oldFarmers) },
+                  { label: 'Visits', value: String(stats.visits) },
+                  { label: 'Sales', value: `₹${stats.salesTotal.toLocaleString('en-IN')}` },
+                ].map((s) => (
+                  <View key={s.label} style={[styles.statCard, { backgroundColor: theme.backgroundElement }]}>
+                    <ThemedText type="smallBold" style={{ fontSize: 16 }}>
+                      {s.value}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                      {s.label}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.two, marginTop: Spacing.three }}>
+              These numbers are recorded automatically and sent with your report.
             </ThemedText>
 
             {FIELDS.map((f) => (
@@ -161,6 +192,15 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
+  statCard: {
+    flexGrow: 1,
+    flexBasis: '30%',
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.three,
+  },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.one },
   input: {
     borderRadius: Spacing.two,

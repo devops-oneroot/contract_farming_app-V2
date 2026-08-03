@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Brand, Spacing } from '@/constants/theme';
+import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
@@ -74,8 +74,8 @@ const MIN_BOUNDARY_CORNERS = 3;
 // product photos) so it can be verified on this day.
 export default function PendingScreen() {
   const theme = useTheme();
-  const scheme = useColorScheme();
   const router = useRouter();
+  const scheme = useColorScheme();
   const { user } = useAuth();
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
@@ -277,9 +277,7 @@ export default function PendingScreen() {
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.header}>
-          <ThemedText type="subtitle" style={{ fontSize: 22 }}>
-            Today's Tasks
-          </ThemedText>
+          <ThemedText style={styles.headerTitle}>Today's Tasks</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {today}
             {visibleTasks.length > 0 ? ` · ${pendingCount} to verify` : ''}
@@ -556,10 +554,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.lg,
     marginBottom: Spacing.two,
     borderLeftWidth: 3,
     borderLeftColor: AMBER,
+    ...CardShadow,
   },
   followThumb: { width: 48, height: 48, borderRadius: Spacing.two },
   followBtn: {
@@ -584,8 +583,10 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
     backgroundColor: '#fff',
     padding: Spacing.three,
-    borderRadius: Spacing.four,
+    borderRadius: Radius.lg,
+    ...CardShadow,
   },
+  headerTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
   // Red light on the corner of the day badge — farm boundary still missing.
   boundaryDot: {
     position: 'absolute',

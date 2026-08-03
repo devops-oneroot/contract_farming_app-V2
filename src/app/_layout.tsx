@@ -7,6 +7,10 @@ import { LogBox, useColorScheme } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/context/auth';
 import { registerForPush } from '@/lib/push';
+// Imported for its side effect: the background location task must be defined
+// before the OS can deliver a fix to it, including on a cold start into the
+// background. Registering it inside a screen would be too late.
+import '@/lib/tracking';
 
 // PostHog analytics (public client key — safe to ship).
 const POSTHOG_KEY = process.env.EXPO_PUBLIC_POSTHOG_KEY;

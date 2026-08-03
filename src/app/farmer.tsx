@@ -23,7 +23,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, FarmingType, isContract, PackageOfPractices, ProductSale } from '@/lib/api';
+import {
+  api,
+  CatalogCrop,
+  Crop,
+  FarmingType,
+  isContract,
+  PackageOfPractices,
+  ProductSale,
+  Visit,
+} from '@/lib/api';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GREEN = Brand.primary;
@@ -75,6 +84,7 @@ export default function FarmerScreen() {
   // `cropSheet` is null when closed, holds the crop being edited, or 'new' to add.
   const [cropSheet, setCropSheet] = useState<Crop | 'new' | null>(null);
   const [sales, setSales] = useState<ProductSale[]>([]);
+  const [visits, setVisits] = useState<Visit[]>([]);
   // Which sale line we are taking the follow-up after-photo for.
   const [afterFor, setAfterFor] = useState<{ saleId: string; index: number } | null>(null);
   const [uploadingAfter, setUploadingAfter] = useState(false);
@@ -89,15 +99,17 @@ export default function FarmerScreen() {
     useCallback(() => {
     (async () => {
       try {
-        const [cropList, farmerUser, catalogList, saleList] = await Promise.all([
+        const [cropList, farmerUser, catalogList, saleList, visitList] = await Promise.all([
           api.listCrops(farmerId),
           api.getUser(farmerId).catch(() => null),
           api.listCropCatalog().catch(() => []),
           api.listProductSales({ farmerId }).catch(() => []),
+          api.listFarmerVisits(farmerId).catch(() => []),
         ]);
         setCrops(cropList);
         setCatalog(catalogList);
         setSales(saleList);
+        setVisits(visitList);
         setGeofenceCount(farmerUser?.geofence?.length ?? 0);
         if (farmerUser) {
           setFarmerName(farmerUser.name ?? '');
@@ -308,6 +320,60 @@ export default function FarmerScreen() {
                     <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
                   </ThemedView>
                 </Pressable>
+                {/* Revisiting: photograph the farm again and note what was seen. */}
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: '/visit-farmer',
+                      params: {
+                        farmerId,
+                        farmerName: farmerName || name || '',
+                        farmerMobile,
+                      },
+                    })
+                  }
+                  style={({ pressed }) => pressed && { opacity: 0.85 }}>
+                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                    <View style={[styles.geoIcon, { backgroundColor: AMBER }]}>
+                      <Ionicons name="camera" size={18} color="#fff" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText type="smallBold">Log a visit</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {visits.length > 0
+                          ? `${visits.length} visit${visits.length > 1 ? 's' : ''} · last ${fmt(
+                              new Date(visits[0].visitedAt)
+                            )}`
+                          : 'Photos and notes from this visit'}
+                      </ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </ThemedView>
+                </Pressable>
+
+                {/* Something wrong with a crop — photograph it and ask a senior. */}
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: '/report-disease',
+                      params: { farmerId, farmerName: farmerName || name || '' },
+                    })
+                  }
+                  style={({ pressed }) => pressed && { opacity: 0.85 }}>
+                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                    <View style={[styles.geoIcon, { backgroundColor: Brand.danger }]}>
+                      <Ionicons name="bug" size={18} color="#fff" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText type="smallBold">Report crop disease</ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Photograph it and ask a senior agronomist
+                      </ThemedText>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+                  </ThemedView>
+                </Pressable>
+
                 {/* Sell a product on the spot, with before/after proof photos. */}
                 <Pressable
                   onPress={() =>
@@ -355,7 +421,54 @@ export default function FarmerScreen() {
               </ThemedView>
             }
             ListFooterComponent={
-              sales.length > 0 ? (
+              <>
+              {/* Every previous visit to this farm — photos and what was noted. */}
+              {visits.length > 0 && (
+                <View style={{ marginTop: Spacing.four }}>
+                  <ThemedText type="smallBold" style={{ marginBottom: Spacing.two }}>
+                    Visits ({visits.length})
+                  </ThemedText>
+                  {visits.map((v) => {
+                    const photos = [
+                      { url: v.farmPhotoUrl, label: 'Farm' },
+                      { url: v.farmerPhotoUrl, label: 'With farmer' },
+                    ].filter((p) => p.url);
+                    return (
+                      <ThemedView key={v._id} type="backgroundElement" style={styles.saleCard}>
+                        <View style={styles.saleItemHead}>
+                          <ThemedText type="smallBold" style={{ flex: 1 }}>
+                            {fmt(new Date(v.visitedAt))}
+                          </ThemedText>
+                          {typeof v.agronomist === 'object' && v.agronomist?.name ? (
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {v.agronomist.name}
+                            </ThemedText>
+                          ) : null}
+                        </View>
+                        {photos.length > 0 && (
+                          <View style={styles.salePhotos}>
+                            {photos.map((p) => (
+                              <View key={p.label} style={{ flex: 1 }}>
+                                <Image source={{ uri: p.url }} style={styles.salePhoto} contentFit="cover" />
+                                <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
+                                  {p.label}
+                                </ThemedText>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                        {v.notes ? (
+                          <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+                            {v.notes}
+                          </ThemedText>
+                        ) : null}
+                      </ThemedView>
+                    );
+                  })}
+                </View>
+              )}
+
+              {sales.length > 0 ? (
                 <View style={{ marginTop: Spacing.four }}>
                   <ThemedText type="smallBold" style={{ marginBottom: Spacing.two }}>
                     Products given ({sales.length})
@@ -463,7 +576,8 @@ export default function FarmerScreen() {
                     </ThemedView>
                   ))}
                 </View>
-              ) : null
+              ) : null}
+              </>
             }
             renderItem={({ item }) => {
               // Only contract crops have a Package of Practices. A regular crop's card
@@ -808,6 +922,13 @@ function Stat({ label, value, theme }: { label: string; value: string; theme: an
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
   // Crops header + "Add crop", and the add/edit-crop sheet.
   cropsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   addCropBtn: {
@@ -845,13 +966,6 @@ const styles = StyleSheet.create({
   },
   dateBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   doneBtn: { alignItems: 'center', paddingVertical: Spacing.three },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six, gap: Spacing.two },
   geoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
   geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2e9e5b', alignItems: 'center', justifyContent: 'center' },

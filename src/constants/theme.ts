@@ -95,5 +95,35 @@ export const Spacing = {
   six: 64,
 } as const;
 
+/**
+ * Corner radii, by the size of the thing. Cards and sheets share the same
+ * curvature so the app reads as one surface rather than a pile of components.
+ */
+export const Radius = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  pill: 999,
+} as const;
+
+/**
+ * The single elevation used by every raised surface — cards, tiles, the tab bar.
+ * Screens must not re-declare their own: two shadows at different depths on one
+ * screen is what makes an interface look assembled rather than designed.
+ */
+export const CardShadow = {
+  shadowColor: '#000',
+  shadowOpacity: 0.06,
+  shadowRadius: 10,
+  shadowOffset: { width: 0, height: 3 },
+  elevation: 2,
+} as const;
+
+/**
+ * Breathing room a scrolling screen leaves at the bottom. The tab bar is docked,
+ * so the navigator already keeps content clear of it — this is only so the last
+ * row does not sit flush against the bar.
+ */
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;

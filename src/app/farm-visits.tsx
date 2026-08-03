@@ -14,6 +14,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { Farmer, Visit, api } from '@/lib/api';
+import { callFarmer } from '@/lib/call';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -331,6 +332,14 @@ export default function FarmVisitsScreen() {
                       {f.visited ? 'Visited · tap to view photos' : fmtDist(f.distance)}
                     </ThemedText>
                   </View>
+                  {f.mobile ? (
+                    <Pressable
+                      onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.callBtn, pressed && { opacity: 0.85 }]}>
+                      <Ionicons name="call" size={16} color="#fff" />
+                    </Pressable>
+                  ) : null}
                   {f.visited ? (
                     <Ionicons name="images-outline" size={20} color={GREEN} />
                   ) : (
@@ -651,6 +660,14 @@ const styles = StyleSheet.create({
   detailLabel: { marginTop: Spacing.three, marginBottom: Spacing.one, fontWeight: '700' },
   detailPhoto: { width: '100%', height: 220, borderRadius: Spacing.four },
   mapLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.four, marginBottom: Spacing.two },
+  callBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   visitBtn: {
     flexDirection: 'row',
     alignItems: 'center',

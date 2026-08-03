@@ -1,0 +1,382 @@
+import { Ionicons } from '@expo/vector-icons';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as Location from 'expo-location';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { usePostHog } from 'posthog-react-native';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image as RNImage,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { CameraCapture } from '@/components/camera-capture';
+import { ThemedText } from '@/components/themed-text';
+import { Brand, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
+import { useTheme } from '@/hooks/use-theme';
+import { api, Crop } from '@/lib/api';
+
+const GREEN = Brand.primary;
+const GREEN_SURFACE = Brand.surface;
+const MAX_PHOTOS = 5;
+
+async function shrink(uri: string) {
+  try {
+    const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+      compress: 0.6,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    return out.uri;
+  } catch {
+    return uri;
+  }
+}
+
+/**
+ * A field agent photographs a crop that looks diseased and sends it to every
+ * senior agronomist for advice. Reachable from a farmer's page, so the farmer
+ * and crop come pre-filled.
+ */
+export default function ReportDiseaseScreen() {
+  const theme = useTheme();
+  const scheme = useColorScheme();
+  const router = useRouter();
+  const posthog = usePostHog();
+  const { user } = useAuth();
+  const keyboardHeight = useKeyboardHeight();
+  const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
+
+  const params = useLocalSearchParams<{ farmerId?: string; farmerName?: string }>();
+  const farmerId = params.farmerId ?? '';
+
+  const [crops, setCrops] = useState<Crop[]>([]);
+  const [cropId, setCropId] = useState<string | null>(null);
+  // Typed instead, when the report is raised without a farmer's crop list.
+  const [cropName, setCropName] = useState('');
+  const [seniors, setSeniors] = useState<{ _id: string; name: string; mobile: string }[]>([]);
+  const [sentToId, setSentToId] = useState<string | null>(null); // null = anyone
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [note, setNote] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listSeniorAgronomists().then(setSeniors).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!farmerId) return;
+    api
+      .listCrops(farmerId)
+      .then((cs) => {
+        setCrops(cs);
+        if (cs.length === 1) setCropId(cs[0]._id);
+      })
+      .catch(() => {});
+  }, [farmerId]);
+
+  // Where the problem was seen. Best-effort: a missing fix must not block it.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const pos = await Location.getCurrentPositionAsync({});
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      } catch {
+        // no location — the report is still valid
+      }
+    })();
+  }, []);
+
+  const send = async () => {
+    if (!user) return;
+    if (photos.length === 0) {
+      setError('Take at least one photo of the affected crop.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const sized = await Promise.all(
+        photos.map(async (p, i) => ({
+          uri: await shrink(p),
+          name: `disease_${i}.jpg`,
+          type: 'image/jpeg',
+        }))
+      );
+      await api.createDiseaseReport({
+        reporterId: user._id,
+        farmerId: farmerId || null,
+        cropId,
+        cropName: cropId ? undefined : cropName.trim(),
+        sentToId,
+        note: note.trim(),
+        latitude: coords?.lat ?? null,
+        longitude: coords?.lng ?? null,
+        photos: sized,
+      });
+      posthog?.capture('disease_reported', {
+        photos: photos.length,
+        hasCrop: !!cropId,
+        directed: !!sentToId,
+      });
+      const to = seniors.find((s) => s._id === sentToId);
+      Alert.alert(
+        'Sent ✓',
+        `${to ? `${to.name} has` : 'Every senior agronomist has'} been notified. You will get a notification when ${to ? 'they reply' : 'one replies'}.`,
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+    } catch (e: any) {
+      setError(e?.message || 'Could not send the report.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const crop = crops.find((c) => c._id === cropId);
+
+  return (
+    <View style={[styles.container, { backgroundColor: screenBg }]}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.topBar}>
+            <Pressable onPress={() => router.back()} hitSlop={10}>
+              <Ionicons name="chevron-back" size={26} color={theme.text} />
+            </Pressable>
+            <ThemedText type="smallBold">Report crop disease</ThemedText>
+            <View style={{ width: 26 }} />
+          </View>
+
+          <ScrollView
+            contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+            keyboardShouldPersistTaps="handled">
+            <ThemedText type="small" themeColor="textSecondary">
+              {params.farmerName ? `${params.farmerName}'s farm` : 'This farm'} · sent to every senior
+              agronomist
+            </ThemedText>
+
+            {crops.length > 0 ? (
+              <>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+                  Which crop
+                </ThemedText>
+                <View style={styles.chipWrap}>
+                  {crops.map((c) => {
+                    const on = cropId === c._id;
+                    return (
+                      <Pressable
+                        key={c._id}
+                        onPress={() => setCropId(on ? null : c._id)}
+                        style={[styles.chip, { backgroundColor: on ? GREEN : theme.backgroundElement }]}>
+                        <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
+                          {c.name}
+                          {c.variety ? ` · ${c.variety}` : ''}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : (
+              // Raised without a farmer's crop list, so the name has to be typed.
+              <>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+                  Crop name
+                </ThemedText>
+                <TextInput
+                  value={cropName}
+                  onChangeText={setCropName}
+                  placeholder="e.g. Turmeric"
+                  placeholderTextColor={theme.textSecondary}
+                  style={[styles.nameInput, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+                />
+              </>
+            )}
+
+            {/* Who answers. "Anyone" reaches every senior — fastest, but nobody
+                owns it; naming one gives it an owner at the cost of waiting. */}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              Send to
+            </ThemedText>
+            <View style={styles.chipWrap}>
+              <Pressable
+                onPress={() => setSentToId(null)}
+                style={[styles.chip, { backgroundColor: sentToId === null ? GREEN : theme.backgroundElement }]}>
+                <ThemedText
+                  type="small"
+                  style={{ color: sentToId === null ? '#fff' : theme.text, fontWeight: '600' }}>
+                  Any senior
+                </ThemedText>
+              </Pressable>
+              {seniors.map((s) => {
+                const on = sentToId === s._id;
+                return (
+                  <Pressable
+                    key={s._id}
+                    onPress={() => setSentToId(on ? null : s._id)}
+                    style={[styles.chip, { backgroundColor: on ? GREEN : theme.backgroundElement }]}>
+                    <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
+                      {s.name}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {seniors.length === 0 && (
+              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11, marginTop: Spacing.one }}>
+                No senior agronomists have signed up yet — this will wait until one does.
+              </ThemedText>
+            )}
+
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              Photos <ThemedText style={{ color: Brand.danger }}>*</ThemedText> ({photos.length}/
+              {MAX_PHOTOS})
+            </ThemedText>
+            <View style={styles.photoWrap}>
+              {photos.map((p, i) => (
+                <View key={`${p}-${i}`}>
+                  <RNImage source={{ uri: p }} style={styles.photo} resizeMode="cover" />
+                  <Pressable
+                    onPress={() => setPhotos((ps) => ps.filter((_, n) => n !== i))}
+                    hitSlop={8}
+                    style={styles.removeBtn}>
+                    <Ionicons name="close-circle" size={20} color="#fff" />
+                  </Pressable>
+                </View>
+              ))}
+              {photos.length < MAX_PHOTOS && (
+                <Pressable onPress={() => setCameraOpen(true)} style={styles.addPhoto}>
+                  <Ionicons name="camera-outline" size={24} color={GREEN} />
+                  <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                    Add
+                  </ThemedText>
+                </Pressable>
+              )}
+            </View>
+            <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11, marginTop: Spacing.one }}>
+              Close-ups of the affected leaves help most.
+            </ThemedText>
+
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              What are you seeing?
+            </ThemedText>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="e.g. Yellow spots spreading on lower leaves for 3 days"
+              placeholderTextColor={theme.textSecondary}
+              multiline
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+
+            {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
+
+            <Pressable onPress={send} disabled={saving} style={[styles.sendBtn, { opacity: saving ? 0.6 : 1 }]}>
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="send" size={18} color="#fff" />
+                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                    Ask senior agronomist
+                  </ThemedText>
+                </>
+              )}
+            </Pressable>
+            {crop ? (
+              <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.two }}>
+                About {crop.name}
+              </ThemedText>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+
+      {cameraOpen && (
+        <CameraCapture
+          onCapture={(uri) => {
+            setPhotos((ps) => [...ps, uri]);
+            setCameraOpen(false);
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  body: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two },
+  fieldLabel: { marginTop: Spacing.four },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  chip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Spacing.five },
+  nameInput: {
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+    fontSize: 16,
+    marginTop: Spacing.two,
+  },
+  photoWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  photo: { width: 96, height: 96, borderRadius: Spacing.three, backgroundColor: '#d8d8d8' },
+  removeBtn: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 10,
+  },
+  addPhoto: {
+    width: 96,
+    height: 96,
+    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  input: {
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+    fontSize: 15,
+    minHeight: 90,
+    textAlignVertical: 'top',
+    marginTop: Spacing.one,
+  },
+  error: { color: Brand.danger, marginTop: Spacing.two },
+  sendBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    backgroundColor: GREEN,
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.four,
+    marginTop: Spacing.five,
+  },
+});
