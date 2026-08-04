@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -8,12 +7,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,12 +17,12 @@ import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import {
   api,
   CatalogCrop,
   Crop,
-  FarmingType,
   isContract,
   PackageOfPractices,
   ProductSale,
@@ -64,6 +59,7 @@ function currentStage(pop: PackageOfPractices | undefined, dayN: number | null) 
 export default function FarmerScreen() {
   const theme = useTheme();
   const router = useRouter();
+  const { user } = useAuth();
   const { farmerId, name } = useLocalSearchParams<{ farmerId: string; name: string }>();
 
   const [crops, setCrops] = useState<Crop[]>([]);
@@ -76,24 +72,18 @@ export default function FarmerScreen() {
   // Farmer's own details, edited from this screen by their agronomist.
   const [farmerName, setFarmerName] = useState('');
   const [farmerMobile, setFarmerMobile] = useState('');
-  const [editOpen, setEditOpen] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Only the agronomist who registered this farmer may remove them, so the
+  // action is hidden entirely for farmers who were merely assigned.
+  const [onboardedByMe, setOnboardedByMe] = useState(false);
+  const [trashing, setTrashing] = useState(false);
 
   // Add a crop, or fill in a planting date that was left blank at onboarding.
   // `cropSheet` is null when closed, holds the crop being edited, or 'new' to add.
-  const [cropSheet, setCropSheet] = useState<Crop | 'new' | null>(null);
   const [sales, setSales] = useState<ProductSale[]>([]);
   const [visits, setVisits] = useState<Visit[]>([]);
   // Which sale line we are taking the follow-up after-photo for.
   const [afterFor, setAfterFor] = useState<{ saleId: string; index: number } | null>(null);
   const [uploadingAfter, setUploadingAfter] = useState(false);
-  const [pickedCrop, setPickedCrop] = useState<CatalogCrop | null>(null);
-  const [cropVariety, setCropVariety] = useState('');
-  const [cropType, setCropType] = useState<FarmingType>('contract');
-  const [cropArea, setCropArea] = useState('');
-  const [cropDop, setCropDop] = useState<Date | null>(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -114,6 +104,7 @@ export default function FarmerScreen() {
         if (farmerUser) {
           setFarmerName(farmerUser.name ?? '');
           setFarmerMobile(farmerUser.mobile ?? '');
+          setOnboardedByMe(!!user && String(farmerUser.onboardedBy ?? '') === user._id);
         }
         // Fetch the schedule for each distinct crop to compute the current stage.
         // Regular crops have no schedule, so they are not worth a request.
@@ -132,37 +123,52 @@ export default function FarmerScreen() {
         setLoading(false);
       }
     })();
-    }, [farmerId])
+    }, [farmerId, user])
   );
 
   // Each crop's own picture from the admin catalog, matched on name.
   const catalogImage = (name: string) =>
     catalog.find((c) => c.name.toLowerCase() === name.toLowerCase())?.imageUrl;
 
-  const openEdit = () => {
-    setEditName(farmerName);
-    setEditOpen(true);
+  /** Everything editable about this farmer lives on one screen. */
+  const openEdit = () =>
+    router.push({ pathname: '/edit-farmer', params: { farmerId } } as never);
+
+  /**
+   * Move this one farmer to the trash. Confirmed first, and worded so it is
+   * clear nothing is being destroyed - their crops and history come back if
+   * they are restored. The server independently re-checks that this agronomist
+   * onboarded them; this screen only decides whether to offer the action.
+   */
+  const confirmTrash = () => {
+    if (!user || !farmerId || trashing) return;
+    const who = farmerName || name || 'this farmer';
+    Alert.alert(
+      `Remove ${who}?`,
+      `They move to your trash and stop appearing in your lists. Nothing is deleted — their ${
+        crops.length === 1 ? 'crop' : 'crops'
+      }, visits and calls stay, and you can restore them from Trash.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Move to trash',
+          style: 'destructive',
+          onPress: async () => {
+            setTrashing(true);
+            try {
+              await api.trashFarmer(user._id, farmerId);
+              router.back();
+            } catch (e: any) {
+              Alert.alert('Could not remove', e?.message || 'Please try again.');
+            } finally {
+              setTrashing(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
-  const saveEdit = async () => {
-    const next = editName.trim();
-    if (!next) {
-      Alert.alert('Name required', "Please enter the farmer's name.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const updated = await api.updateProfile(farmerId, { name: next });
-      setFarmerName(updated.name ?? next);
-      setEditOpen(false);
-    } catch (e: any) {
-      Alert.alert('Could not save', e?.message || 'Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Follow-up visit: photograph the crop again and attach it to that sale line.
   const captureAfter = async (uri: string) => {
     if (!afterFor) return;
     const { saleId, index } = afterFor;
@@ -187,77 +193,6 @@ export default function FarmerScreen() {
       Alert.alert('Could not save the photo', e?.message || 'Please try again.');
     } finally {
       setUploadingAfter(false);
-    }
-  };
-
-  const openAddCrop = () => {
-    setPickedCrop(null);
-    setCropVariety('');
-    setCropType('contract');
-    setCropArea('');
-    setCropDop(null);
-    setCropSheet('new');
-  };
-
-  // Existing crop: prefill so the agronomist only fills in what's missing.
-  const openEditCrop = (crop: Crop) => {
-    setPickedCrop(catalog.find((c) => c.name.toLowerCase() === crop.name.toLowerCase()) ?? null);
-    setCropVariety(crop.variety ?? '');
-    setCropType(isContract(crop) ? 'contract' : 'regular');
-    setCropArea(crop.area != null ? String(crop.area) : '');
-    setCropDop(crop.dop ? new Date(crop.dop) : null);
-    setCropSheet(crop);
-  };
-
-  const saveCrop = async () => {
-    const editingExisting = cropSheet !== 'new' && cropSheet !== null;
-    if (!editingExisting && !pickedCrop) {
-      Alert.alert('Pick a crop', 'Please choose which crop this farmer is growing.');
-      return;
-    }
-    if (!cropArea.trim()) {
-      Alert.alert('Area required', 'Please enter how many acres this crop is grown on.');
-      return;
-    }
-    if (!(Number(cropArea) > 0)) {
-      Alert.alert('Check the area', 'Area must be a number greater than 0.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const contract = cropType === 'contract';
-      // A regular crop follows no schedule, so a planting date would mean nothing.
-      const plantedOn = contract && cropDop ? cropDop.toISOString() : null;
-      const acres = cropArea.trim() ? Number(cropArea) : null;
-      if (editingExisting) {
-        const updated = await api.updateCrop(cropSheet._id, {
-          variety: cropVariety.trim(),
-          farmingType: cropType,
-          area: acres,
-          dop: plantedOn,
-        });
-        setCrops((cs) => cs.map((c) => (c._id === updated._id ? updated : c)));
-      } else {
-        const created = await api.addCrop(farmerId, {
-          name: pickedCrop!.name,
-          variety: cropVariety.trim(),
-          farmingType: cropType,
-          area: acres,
-          dop: plantedOn,
-        });
-        setCrops((cs) => [created, ...cs]);
-        // Pull this crop's schedule in so its stage shows straight away.
-        const key = created.name.toLowerCase();
-        if (contract && !pops[key]) {
-          const pop = await api.getPractices(created.name).catch(() => null);
-          if (pop) setPops((p) => ({ ...p, [key]: pop }));
-        }
-      }
-      setCropSheet(null);
-    } catch (e: any) {
-      Alert.alert('Could not save', e?.message || 'Please try again.');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -402,7 +337,7 @@ export default function FarmerScreen() {
                 <View style={styles.cropsHead}>
                   <ThemedText type="smallBold">Crops ({crops.length})</ThemedText>
                   <Pressable
-                    onPress={openAddCrop}
+                    onPress={openEdit}
                     hitSlop={8}
                     style={({ pressed }) => [styles.addCropBtn, pressed && { opacity: 0.85 }]}>
                     <Ionicons name="add" size={16} color="#fff" />
@@ -577,6 +512,33 @@ export default function FarmerScreen() {
                   ))}
                 </View>
               ) : null}
+
+              {/* Removing a farmer sits on its own at the very bottom, well away
+                  from the day's work, and only for farmers this agronomist
+                  registered themselves. */}
+              {onboardedByMe ? (
+                <Pressable
+                  onPress={confirmTrash}
+                  disabled={trashing}
+                  style={({ pressed }) => [
+                    styles.trashBtn,
+                    (pressed || trashing) && { opacity: 0.7 },
+                  ]}>
+                  {trashing ? (
+                    <ActivityIndicator color={Brand.danger} size="small" />
+                  ) : (
+                    <Ionicons name="trash-outline" size={18} color={Brand.danger} />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="smallBold" style={{ color: Brand.danger }}>
+                      Remove this farmer
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Moves to trash — restore any time, nothing is deleted
+                    </ThemedText>
+                  </View>
+                </Pressable>
+              ) : null}
               </>
             }
             renderItem={({ item }) => {
@@ -601,7 +563,7 @@ export default function FarmerScreen() {
                             variety: item.variety ?? '',
                           },
                         })
-                      : openEditCrop(item)
+                      : openEdit()
                   }
                   style={({ pressed }) => pressed && { opacity: 0.7 }}>
                   <ThemedView type="backgroundElement" style={styles.card}>
@@ -629,7 +591,7 @@ export default function FarmerScreen() {
                           </ThemedText>
                         ) : (
                           // No planting date means no schedule at all — make fixing it one tap.
-                          <Pressable onPress={() => openEditCrop(item)} hitSlop={8}>
+                          <Pressable onPress={openEdit} hitSlop={8}>
                             <View style={styles.fixRow}>
                               <Ionicons name="calendar-outline" size={12} color={AMBER} />
                               <ThemedText type="small" style={styles.fixText}>
@@ -683,227 +645,6 @@ export default function FarmerScreen() {
         )}
       </SafeAreaView>
 
-      {/* Edit farmer details */}
-      <Modal
-        visible={editOpen}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setEditOpen(false)}>
-        <ThemedView style={styles.container}>
-          <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-            <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-              <View style={styles.topBar}>
-                <Pressable onPress={() => setEditOpen(false)} hitSlop={12}>
-                  <Ionicons name="close" size={26} color={theme.text} />
-                </Pressable>
-                <ThemedText type="smallBold">Edit farmer</ThemedText>
-                <View style={{ width: 26 }} />
-              </View>
-
-              <View style={styles.editBody}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Name
-                </ThemedText>
-                <TextInput
-                  value={editName}
-                  onChangeText={setEditName}
-                  placeholder="Farmer's name"
-                  placeholderTextColor={theme.textSecondary}
-                  autoFocus
-                  autoCapitalize="words"
-                  style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-                />
-                <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                  Mobile {farmerMobile || '—'} can’t be changed — it’s the farmer’s login.
-                </ThemedText>
-
-                <Pressable
-                  onPress={saveEdit}
-                  disabled={saving}
-                  style={[styles.saveBtn, { opacity: saving ? 0.6 : 1 }]}>
-                  {saving ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <ThemedText type="smallBold" style={{ color: '#fff' }}>
-                      Save
-                    </ThemedText>
-                  )}
-                </Pressable>
-              </View>
-            </KeyboardAvoidingView>
-          </SafeAreaView>
-        </ThemedView>
-      </Modal>
-
-      {/* Add a crop, or fill in details missing from an existing one. */}
-      <Modal visible={cropSheet !== null} transparent animationType="fade" onRequestClose={() => setCropSheet(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setCropSheet(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: theme.background }]} onPress={() => {}}>
-            <View style={styles.sheetHandle} />
-            <ThemedText type="smallBold" style={{ fontSize: 16 }}>
-              {cropSheet === 'new' ? 'Add crop' : `${(cropSheet as Crop)?.name ?? ''} · details`}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.three }}>
-              {cropSheet === 'new'
-                ? 'Which crop is this farmer growing?'
-                : 'Fill in what is missing — the schedule counts from the planting date.'}
-            </ThemedText>
-
-            {/* Crop picker — only when adding; an existing crop can't change identity. */}
-            {cropSheet === 'new' && (
-              <>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Crop
-                </ThemedText>
-                <View style={styles.chipWrap}>
-                  {catalog.map((c) => {
-                    const on = pickedCrop?._id === c._id;
-                    return (
-                      <Pressable
-                        key={c._id}
-                        onPress={() => {
-                          setPickedCrop(on ? null : c);
-                          setCropVariety('');
-                        }}
-                        style={[
-                          styles.chip,
-                          { backgroundColor: on ? GREEN : theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
-                        ]}>
-                        <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
-                          {c.name}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            )}
-
-            {/* Variety — from the catalog when it defines any, else free text. */}
-            {(pickedCrop?.varieties?.length ?? 0) > 0 ? (
-              <>
-                <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                  Variety
-                </ThemedText>
-                <View style={styles.chipWrap}>
-                  {pickedCrop!.varieties.map((v) => {
-                    const on = cropVariety === v;
-                    return (
-                      <Pressable
-                        key={v}
-                        onPress={() => setCropVariety(on ? '' : v)}
-                        style={[
-                          styles.chip,
-                          { backgroundColor: on ? GREEN : theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
-                        ]}>
-                        <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
-                          {v}
-                        </ThemedText>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : (
-              <>
-                <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                  Variety
-                </ThemedText>
-                <TextInput
-                  value={cropVariety}
-                  onChangeText={setCropVariety}
-                  placeholder="Variety (optional)"
-                  placeholderTextColor={theme.textSecondary}
-                  style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-                />
-              </>
-            )}
-
-            {/* Area for THIS crop — a farmer's crops sit on different plots. */}
-            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-              Area (acres) <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
-            </ThemedText>
-            <TextInput
-              value={cropArea}
-              onChangeText={setCropArea}
-              keyboardType="decimal-pad"
-              placeholder="e.g. 2.5"
-              placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
-            />
-
-            {/* Contract or regular — decides whether this crop gets a schedule at all. */}
-            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-              Farming type
-            </ThemedText>
-            <View style={styles.chipWrap}>
-              {(['contract', 'regular'] as FarmingType[]).map((t) => {
-                const on = cropType === t;
-                return (
-                  <Pressable
-                    key={t}
-                    onPress={() => setCropType(t)}
-                    style={[
-                      styles.chip,
-                      { backgroundColor: on ? GREEN : theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
-                    ]}>
-                    <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
-                      {t === 'contract' ? 'Contract farming' : 'Regular farmer'}
-                    </ThemedText>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {/* D.O.P — contract crops only: it is what the schedule counts from. */}
-            {cropType === 'contract' && (
-              <>
-                <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                  Date of planting (D.O.P)
-                </ThemedText>
-                <Pressable
-                  onPress={() => setShowDatePicker(true)}
-                  style={[styles.input, styles.dateBtn, { backgroundColor: theme.backgroundElement }]}>
-                  <ThemedText style={{ color: cropDop ? theme.text : theme.textSecondary }}>
-                    {cropDop ? fmt(cropDop) : 'Select the planting date'}
-                  </ThemedText>
-                  <Ionicons name="calendar-outline" size={18} color={theme.textSecondary} />
-                </Pressable>
-                {showDatePicker && (
-                  <DateTimePicker
-                    value={cropDop ?? new Date()}
-                    mode="date"
-                    maximumDate={new Date()}
-                    onChange={(event, selected) => {
-                      if (Platform.OS !== 'ios') setShowDatePicker(false);
-                      if (event.type === 'set' && selected) setCropDop(selected);
-                    }}
-                  />
-                )}
-                {Platform.OS === 'ios' && showDatePicker && (
-                  <Pressable onPress={() => setShowDatePicker(false)} style={styles.doneBtn}>
-                    <ThemedText type="linkPrimary">Done</ThemedText>
-                  </Pressable>
-                )}
-              </>
-            )}
-
-            <Pressable
-              onPress={saveCrop}
-              disabled={saving}
-              style={[styles.saveBtn, { opacity: saving ? 0.6 : 1 }]}>
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <ThemedText type="smallBold" style={{ color: '#fff' }}>
-                  {cropSheet === 'new' ? 'Add crop' : 'Save details'}
-                </ThemedText>
-              )}
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
       {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
     </ThemedView>
   );
@@ -921,6 +662,38 @@ function Stat({ label, value, theme }: { label: string; value: string; theme: an
 }
 
 const styles = StyleSheet.create({
+  fieldLabel: { marginTop: Spacing.three },
+  warnRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: Spacing.two,
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+    backgroundColor: Brand.accentSurface,
+  },
+  locBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderColor: `${Brand.primary}55`,
+    backgroundColor: Brand.primarySurface,
+  },
+  trashBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.five,
+    marginBottom: Spacing.four,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderColor: `${Brand.danger}44`,
+    backgroundColor: Brand.dangerSurface,
+  },
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row',
@@ -948,6 +721,17 @@ const styles = StyleSheet.create({
     borderTopRightRadius: Spacing.five,
     padding: Spacing.four,
     paddingBottom: Spacing.five,
+  },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, flexWrap: 'wrap' },
+  notesInput: { minHeight: 72, textAlignVertical: 'top' },
+  lockRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: Spacing.two,
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+    backgroundColor: 'rgba(0,0,0,0.04)',
   },
   sheetHandle: {
     width: 40,
@@ -1001,7 +785,12 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: Spacing.two, gap: 2 },
   stageBox: { padding: Spacing.three, borderRadius: Spacing.two, gap: 2 },
   avatarText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  editBody: { paddingHorizontal: Spacing.four, paddingTop: Spacing.three },
+  editBody: {
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.three,
+    paddingBottom: Spacing.six,
+    gap: Spacing.one,
+  },
   input: {
     borderRadius: Spacing.three,
     paddingHorizontal: Spacing.three,

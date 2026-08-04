@@ -93,6 +93,16 @@ export default function OnboardedScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.header}>
           <ThemedText style={styles.headerTitle}>Onboarded</ThemedText>
+          {/* Farmers removed from this list are not gone — they wait here. */}
+          <Pressable
+            onPress={() => router.push('/farmer-trash' as never)}
+            hitSlop={10}
+            style={({ pressed }) => [styles.trashLink, pressed && { opacity: 0.7 }]}>
+            <Ionicons name="trash-outline" size={16} color={theme.textSecondary} />
+            <ThemedText type="small" themeColor="textSecondary" style={{ fontWeight: '700' }}>
+              Trash
+            </ThemedText>
+          </Pressable>
         </View>
 
         {/* Search by name or number */}
@@ -227,7 +237,15 @@ export default function OnboardedScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, paddingBottom: Spacing.two },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.two,
+  },
+  trashLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',

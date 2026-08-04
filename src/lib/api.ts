@@ -31,6 +31,38 @@ export type Farmer = {
    * added them from the dashboard — i.e. the farmer was assigned, not onboarded.
    */
   onboardedBy?: string | null;
+  /** Village/taluk/district/state of the farm. */
+  farmAddress?: FarmAddress;
+  /** True when the address above was typed in by hand rather than geocoded. */
+  farmAddressManual?: boolean;
+};
+
+/**
+ * Where the farm is. Normally reverse-geocoded from the drawn boundary, but an
+ * agronomist can type it in when the geocoder gets a rural village wrong — see
+ * `farmAddressManual`.
+ */
+export type FarmAddress = {
+  village: string;
+  taluk: string;
+  district: string;
+  state: string;
+  geocodedAt?: string | null;
+};
+
+/** A farmer sitting in the trash — hidden from every list, but not deleted. */
+export type TrashedFarmer = {
+  _id: string;
+  name: string;
+  mobile: string;
+  createdAt: string;
+  /** When they were moved to the trash. */
+  deletedAt: string;
+  /** Crops that come back with them on restore. */
+  cropCount: number;
+  daysInTrash: number;
+  /** Advisory only — nothing is deleted when this reaches zero. */
+  daysLeft: number;
 };
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
@@ -227,6 +259,14 @@ export type User = {
   location: { latitude: number | null; longitude: number | null };
   geofence?: GeoPoint[]; // farm boundary polygon drawn by the farmer
   agronomist?: AgronomistRef | null; // for farmers: the managing agronomist (populated)
+  /**
+   * For farmers: the agronomist who registered them in the field. Only that
+   * agronomist may edit or trash them, so the screen needs it to decide whether
+   * to offer those actions at all.
+   */
+  onboardedBy?: string | null;
+  farmAddress?: FarmAddress;
+  farmAddressManual?: boolean;
 };
 
 export type CropProgress = {
@@ -390,6 +430,64 @@ export const api = {
       `/api/users/agronomists/${agronomistId}/farmers${
         search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''
       }`
+    ),
+
+  /**
+   * Edit a farmer you onboarded — name, mobile, location, farm address.
+   * Send only the fields being changed; anything omitted is left alone.
+   *
+   * Changing `mobile` changes the number that farmer signs in with, so the
+   * screen warns before saving it.
+   */
+  updateFarmerByAgronomist: (
+    agronomistId: string,
+    farmerId: string,
+    body: {
+      name?: string;
+      mobile?: string;
+      location?: { latitude: number | null; longitude: number | null };
+      farmAddress?: { village?: string; taluk?: string; district?: string; state?: string };
+    }
+  ) =>
+    request<Farmer & { farmAddress?: FarmAddress; farmAddressManual?: boolean }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+
+  // Farmers this agronomist onboarded and then removed. They are hidden
+  // everywhere else, but nothing of theirs was deleted.
+  listTrashedFarmers: (agronomistId: string) =>
+    request<TrashedFarmer[]>(`/api/users/agronomists/${agronomistId}/farmers/trash`),
+
+  /**
+   * Move ONE farmer to the trash. The server only allows this for a farmer this
+   * agronomist onboarded themselves, and refuses anything else — there is no
+   * bulk equivalent, by design.
+   */
+  trashFarmer: (agronomistId: string, farmerId: string) =>
+    request<{ _id: string; name: string; mobile: string; deletedAt: string; restoreWithinDays: number }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}/trash`,
+      { method: 'POST' }
+    ),
+
+  /**
+   * PERMANENTLY delete one farmer from the trash. Cannot be undone.
+   *
+   * The server only accepts this for a farmer already in the trash that this
+   * agronomist onboarded, and `confirmName` must match their name exactly.
+   * Their crops go too; visits, calls, sales and disease reports are kept.
+   */
+  deleteFarmerForever: (agronomistId: string, farmerId: string, confirmName: string) =>
+    request<{ _id: string; name: string; cropsDeleted: number; keptRecords: string[] }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}`,
+      { method: 'DELETE', body: JSON.stringify({ confirmName }) }
+    ),
+
+  /** Bring one farmer back out of the trash, with their crops and history. */
+  restoreFarmer: (agronomistId: string, farmerId: string) =>
+    request<{ _id: string; name: string; mobile: string }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}/restore`,
+      { method: 'POST' }
     ),
 
   // Agronomist onboards/links a farmer (and optionally a crop) to themselves.
@@ -752,9 +850,26 @@ export const api = {
 
   // Fill in details left blank at onboarding — usually the planting date the
   // Package of Practices schedule is counted from.
+  /**
+   * Edit a crop. Send only what changed.
+   *
+   * `name` is refused once the crop has recorded work against its schedule —
+   * the server returns 409, because renaming would repoint every recorded step
+   * at a different Package of Practices.
+   */
   updateCrop: (
     cropId: string,
-    body: { variety?: string; farmingType?: FarmingType; dop?: string | null; area?: number | null }
+    body: {
+      name?: string;
+      variety?: string;
+      farmingType?: FarmingType;
+      dop?: string | null;
+      /** Acres. */
+      area?: number | null;
+      quantity?: number | null;
+      unit?: string;
+      notes?: string;
+    }
   ) => request<Crop>(`/api/crops/${cropId}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   // Master crop catalog (admin-defined) shown in the Add-Crop picker.
