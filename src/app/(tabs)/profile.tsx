@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import * as Updates from 'expo-updates';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -27,6 +28,25 @@ import { api, isAgronomist } from '@/lib/api';
 
 const LOGO = require('@/assets/images/logo.png');
 const GREEN = Brand.primary;
+
+/**
+ * Which JavaScript bundle this app is actually running: the one baked into the
+ * build, or an over-the-air update on top of it.
+ *
+ * Shown in the footer so an OTA can be confirmed from the phone itself — a
+ * colour change tells you something arrived, this tells you exactly what. All
+ * values are null in development, where expo-updates is disabled.
+ */
+function bundleLabel() {
+  if (__DEV__) return 'dev';
+  if (Updates.isEmbeddedLaunch) return 'base build';
+  const when = Updates.createdAt
+    ? Updates.createdAt.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+    : null;
+  // First segment of the update UUID is plenty to tell two updates apart.
+  const id = Updates.updateId ? Updates.updateId.slice(0, 8) : null;
+  return ['update', when, id].filter(Boolean).join(' · ');
+}
 const GREEN_DARK = '#2f7d46';
 const GREEN_SURFACE = Brand.surface;
 
@@ -212,7 +232,7 @@ export default function ProfileScreen() {
             OneRoot · Contract farming, simplified
           </ThemedText>
           <ThemedText type="small" style={styles.version}>
-            v1.0.0
+            v1.0.0 · {bundleLabel()}
           </ThemedText>
         </View>
       </ScrollView>
