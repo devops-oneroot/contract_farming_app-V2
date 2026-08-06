@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { Platform, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Brand, Radius } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -8,6 +9,17 @@ import { useTheme } from '@/hooks/use-theme';
 import { isAgronomist as isAgronomistRole } from '@/lib/api';
 
 const GREEN = Brand.primary;
+
+/**
+ * Height of the bar's own content — the icon well plus its label. The system's
+ * bottom inset is added to this at runtime rather than baked in: on a phone
+ * using three-button navigation Android reserves around 48dp down there, and a
+ * fixed height leaves the tabs sitting underneath the Back/Home/Recents keys.
+ * Gesture navigation reserves far less, and an older device none at all.
+ */
+const BAR_CONTENT_HEIGHT = 56;
+/** Kept clear of the very bottom edge when the system reserves nothing. */
+const MIN_BOTTOM_PAD = 8;
 
 /**
  * Filled when active, outlined when not — the shape carries the state as well
@@ -32,7 +44,11 @@ function TabIcon({
 export default function TabsLayout() {
   const theme = useTheme();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const isAgronomist = isAgronomistRole(user?.role);
+
+  // Whatever the system navigation takes, the bar grows by exactly that much.
+  const bottomPad = Math.max(insets.bottom, MIN_BOTTOM_PAD);
 
   return (
     <Tabs
@@ -42,7 +58,12 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: theme.textSecondary,
         tabBarStyle: [
           styles.bar,
-          { backgroundColor: theme.background, borderTopColor: theme.backgroundElement },
+          {
+            backgroundColor: theme.background,
+            borderTopColor: theme.backgroundElement,
+            height: BAR_CONTENT_HEIGHT + bottomPad,
+            paddingBottom: bottomPad,
+          },
         ],
         tabBarItemStyle: styles.item,
         tabBarLabelStyle: styles.label,
@@ -96,8 +117,9 @@ const styles = StyleSheet.create({
     // screen has to reserve space for it by hand — and anything laid out to the
     // bottom (Profile's Log Out) ends up underneath it. Docked, the navigator
     // sizes the content above the bar and nothing can be covered.
-    height: Platform.select({ ios: 84, android: 68 }),
-    paddingBottom: Platform.select({ ios: 24, android: 10 }),
+    //
+    // `height` and `paddingBottom` are set at runtime from the safe-area inset
+    // — see BAR_CONTENT_HEIGHT.
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
   },

@@ -67,6 +67,23 @@ export type TrashedFarmer = {
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
 
+/**
+ * A window to narrow a list by registration date. Sent as full ISO instants,
+ * so the caller's local day boundaries are the ones the server applies.
+ */
+export type DateRange = { from: Date; to: Date };
+
+const rangeParams = (r?: DateRange) =>
+  r ? { from: r.from.toISOString(), to: r.to.toISOString() } : {};
+
+/** Build a query string from the params that actually have a value. */
+function qs(params: Record<string, string | undefined>) {
+  const pairs = Object.entries(params)
+    .filter(([, v]) => v != null && String(v).trim() !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v).trim())}`);
+  return pairs.length ? `?${pairs.join('&')}` : '';
+}
+
 export type StaffRole = 'field_guy' | 'agronomist' | 'junior_agronomist' | 'senior_agronomist';
 
 export type Aggregator = {
@@ -425,11 +442,9 @@ export const api = {
 
   // Farmers mapped to a specific agronomist. `search` filters by name/mobile on the
   // server, so the device never holds the whole roster just to filter it.
-  listAgronomistFarmers: (agronomistId: string, search?: string) =>
+  listAgronomistFarmers: (agronomistId: string, search?: string, range?: DateRange) =>
     request<Farmer[]>(
-      `/api/users/agronomists/${agronomistId}/farmers${
-        search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''
-      }`
+      `/api/users/agronomists/${agronomistId}/farmers${qs({ search, ...rangeParams(range) })}`
     ),
 
   /**
@@ -513,11 +528,9 @@ export const api = {
 
   // ----- Field agent: aggregators / attendance / meetings -----
   // `search` filters by name/company/mobile on the server.
-  listAggregators: (agronomistId: string, search?: string) =>
+  listAggregators: (agronomistId: string, search?: string, range?: DateRange) =>
     request<Aggregator[]>(
-      `/api/aggregators?agronomist=${agronomistId}${
-        search?.trim() ? `&search=${encodeURIComponent(search.trim())}` : ''
-      }`
+      `/api/aggregators${qs({ agronomist: agronomistId, search, ...rangeParams(range) })}`
     ),
   createAggregator: (
     agronomistId: string,
