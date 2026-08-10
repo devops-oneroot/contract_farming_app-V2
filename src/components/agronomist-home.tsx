@@ -185,24 +185,54 @@ export function AgronomistHome() {
           {/* Today, measured. Same numbers the daily report files. */}
           <View style={styles.statRow}>
             {[
-              { value: String(stats?.visits ?? 0), label: 'Visits' },
-              { value: String(stats?.newFarmers ?? 0), label: 'Onboarded' },
-              { value: `${stats?.distanceKm ?? 0}`, label: 'km' },
+              { value: String(stats?.visits ?? 0), label: 'Visits', route: null },
+              {
+                value: String(stats?.newFarmers ?? 0),
+                label: 'Onboarded',
+                // Opens the People list narrowed to exactly what this counts:
+                // farmers YOU registered, today. `t` forces a fresh param on
+                // every tap so returning to the tab re-applies the scope.
+                route: {
+                  pathname: '/(tabs)/onboarded',
+                  params: { scope: 'onboardedToday', t: String(Date.now()) },
+                },
+              },
+              { value: `${stats?.distanceKm ?? 0}`, label: 'km', route: '/tracking' },
             ].map((s) => (
-              <View key={s.label} style={styles.statCard}>
+              <Pressable
+                key={s.label}
+                onPress={s.route ? () => router.push(s.route as never) : undefined}
+                disabled={!s.route}
+                style={({ pressed }) => [styles.statCard, pressed && s.route && { opacity: 0.85 }]}>
                 <ThemedText style={styles.statValue}>{s.value}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
-                  {s.label}
-                </ThemedText>
-              </View>
+                <View style={styles.statLabelRow}>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                    {s.label}
+                  </ThemedText>
+                  {s.route ? (
+                    <Ionicons name="chevron-forward" size={11} color={theme.textSecondary} />
+                  ) : null}
+                </View>
+              </Pressable>
             ))}
           </View>
 
           {/* Actions as a grid — four stacked full-width rows pushed the role
               picker off the first screen entirely. */}
-          <ThemedText type="smallBold" style={styles.sectionTitle}>
-            Quick actions
-          </ThemedText>
+          <View style={styles.sectionRow}>
+            <ThemedText type="smallBold" style={[styles.sectionTitle, { flex: 1 }]}>
+              Quick actions
+            </ThemedText>
+            {/* Same button as the one beside the Farm Visits search bar, so
+                registering a farmer looks the same wherever it is offered. */}
+            <Pressable
+              onPress={() => router.push('/onboard-farmer' as never)}
+              hitSlop={8}
+              accessibilityLabel="Add a farmer"
+              style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}>
+              <Ionicons name="person-add" size={17} color="#fff" />
+            </Pressable>
+          </View>
           <View style={styles.grid}>
             {actions.map((a) => (
               <Pressable
@@ -291,6 +321,18 @@ const styles = StyleSheet.create({
   },
   logoImg: { width: 22, height: 22 },
   sectionTitle: { fontSize: 15, marginTop: Spacing.one },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  // The Farm Visits button, at 38 rather than 44: there it matches the height
+  // of the search bar it sits beside, here it sits beside a 15pt heading.
+  addBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.lg,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...CardShadow,
+  },
 
   statusCard: {
     flexDirection: 'row',
@@ -308,6 +350,7 @@ const styles = StyleSheet.create({
   },
 
   statRow: { flexDirection: 'row', gap: Spacing.two },
+  statLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 1 },
   statCard: {
     flex: 1,
     alignItems: 'center',

@@ -31,10 +31,31 @@ export type Farmer = {
    * added them from the dashboard — i.e. the farmer was assigned, not onboarded.
    */
   onboardedBy?: string | null;
+  /**
+   * The day the admin dashboard wants this farmer visited, set when they were
+   * added or handed over there. Null when no date was given — the visit is
+   * still expected, just not by a particular day.
+   */
+  visitDate?: string | null;
+  /**
+   * How this farmer reached us, asked when an agronomist registered them. Null
+   * on farmers added from the dashboard and on anyone registered before this
+   * was collected. A random visit to them is stamped with it.
+   */
+  referredBy?: VisitSource | null;
   /** Village/taluk/district/state of the farm. */
   farmAddress?: FarmAddress;
   /** True when the address above was typed in by hand rather than geocoded. */
   farmAddressManual?: boolean;
+  /** Photo of the farmer, taken at onboarding. Empty when none was captured. */
+  photoUrl?: string;
+  /** When this farmer is next due a visit. Null when nothing is owed. */
+  nextFollowUpAt?: string | null;
+  /** Why that follow-up was scheduled. */
+  followUpNote?: string;
+  /** Set when the agronomist decided this farmer needed no visit. */
+  skippedAt?: string | null;
+  skipReason?: string;
 };
 
 /**
@@ -66,6 +87,14 @@ export type TrashedFarmer = {
 };
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
+
+/** A Farmer Business Organisation a farmer can belong to. */
+export type Fbo = {
+  _id: string;
+  name: string;
+  village?: string;
+  district?: string;
+};
 
 /**
  * A window to narrow a list by registration date. Sent as full ISO instants,
@@ -240,6 +269,24 @@ export type DayStats = {
   salesTotal: number;
 };
 
+/**
+ * What prompted a visit the agronomist made off their own bat, rather than off
+ * the day's list. Mirrors the enum on the Visit schema.
+ */
+export type VisitSource = 'field_sources' | 'fpo' | 'farmer_called' | 'random' | 'other';
+
+/** How each source reads on screen, in the order the picker offers them. */
+export const VISIT_SOURCES: { key: VisitSource; label: string }[] = [
+  { key: 'field_sources', label: 'Field sources' },
+  { key: 'fpo', label: 'FPO' },
+  { key: 'farmer_called', label: 'Farmer called' },
+  { key: 'random', label: 'Random' },
+  { key: 'other', label: 'Other' },
+];
+
+export const visitSourceLabel = (s?: VisitSource | null) =>
+  VISIT_SOURCES.find((v) => v.key === s)?.label ?? '';
+
 export type Visit = {
   _id: string;
   agronomist: string | AgronomistRef | null;
@@ -249,6 +296,12 @@ export type Visit = {
   farmerPhotoUrl: string;
   location: { latitude: number | null; longitude: number | null };
   notes: string;
+  /**
+   * Set only on a random visit — one the agronomist decided on themselves —
+   * and it says what prompted it. Null on a visit made against the day's list,
+   * so this doubles as the "was this random?" flag.
+   */
+  source?: VisitSource | null;
   visitedAt: string;
   createdAt: string;
 };
@@ -442,9 +495,23 @@ export const api = {
 
   // Farmers mapped to a specific agronomist. `search` filters by name/mobile on the
   // server, so the device never holds the whole roster just to filter it.
-  listAgronomistFarmers: (agronomistId: string, search?: string, range?: DateRange) =>
+  /**
+   * `onlyMine` switches the question from "who is assigned to me?" to "who did
+   * I register?" — the set the home screen's "Onboarded" tile counts, including
+   * farmers since handed to a colleague.
+   */
+  listAgronomistFarmers: (
+    agronomistId: string,
+    search?: string,
+    range?: DateRange,
+    onlyMine?: boolean
+  ) =>
     request<Farmer[]>(
-      `/api/users/agronomists/${agronomistId}/farmers${qs({ search, ...rangeParams(range) })}`
+      `/api/users/agronomists/${agronomistId}/farmers${qs({
+        search,
+        ...rangeParams(range),
+        ...(onlyMine ? { onboardedBy: 'me' } : {}),
+      })}`
     ),
 
   /**
@@ -498,6 +565,20 @@ export const api = {
       { method: 'DELETE', body: JSON.stringify({ confirmName }) }
     ),
 
+  /**
+   * Take one farmer off today's list without visiting them, with a reason.
+   * An optional `nextFollowUpAt` puts them back on the list that day.
+   */
+  skipFarmerVisit: (
+    agronomistId: string,
+    farmerId: string,
+    body: { reason: string; nextFollowUpAt?: string | null }
+  ) =>
+    request<{ _id: string; name: string; skippedAt: string; nextFollowUpAt: string | null }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}/skip`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   /** Bring one farmer back out of the trash, with their crops and history. */
   restoreFarmer: (agronomistId: string, farmerId: string) =>
     request<{ _id: string; name: string; mobile: string }>(
@@ -511,6 +592,10 @@ export const api = {
     body: {
       name: string;
       mobile: string;
+      /** How this farmer reached us. Optional, and only set on a new record. */
+      referredBy?: VisitSource | null;
+      /** The Farmer Business Organisation this farmer belongs to, if any. */
+      fboId?: string | null;
       /** One entry per crop — a farmer usually grows several, each on its own area. */
       crops?: {
         name: string;
@@ -715,6 +800,22 @@ export const api = {
   },
 
   /** Attach the conversation recorded while this farmer was onboarded. */
+  /**
+   * Attach a photo of the farmer. Posted AFTER the farmer exists, so a slow or
+   * failed upload can never cost the registration.
+   */
+  saveFarmerPhoto: async (farmerId: string, photo: { uri: string; name: string; type: string }) => {
+    const form = new FormData();
+    form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/users/${farmerId}/photo`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not upload the photo');
+    return data as { ok: true; photoUrl: string };
+  },
+
   saveOnboardingAudio: async (
     farmerId: string,
     audio: { uri: string; name: string; type: string },
@@ -812,21 +913,30 @@ export const api = {
   // Record a visit with a farm photo + a photo with the farmer + GPS location.
   createVisit: async (body: {
     agronomistId: string;
-    farmerId: string;
+    /** Required for an ordinary visit; omitted on a random one logged by source alone. */
+    farmerId?: string;
     farmerName?: string;
     latitude?: number | null;
     longitude?: number | null;
     notes?: string;
+    /** Omit for an ordinary visit against the day's list. */
+    source?: VisitSource | null;
+    /** When to come back. Omitting it clears any follow-up this farmer had. */
+    nextFollowUpAt?: string | null;
+    followUpNote?: string;
     farmPhoto?: { uri: string; name: string; type: string };
     farmerPhoto?: { uri: string; name: string; type: string };
   }): Promise<Visit> => {
     const form = new FormData();
     form.append('agronomistId', body.agronomistId);
-    form.append('farmerId', body.farmerId);
+    if (body.farmerId) form.append('farmerId', body.farmerId);
     if (body.farmerName) form.append('farmerName', body.farmerName);
     if (body.latitude != null) form.append('latitude', String(body.latitude));
     if (body.longitude != null) form.append('longitude', String(body.longitude));
     if (body.notes) form.append('notes', body.notes);
+    if (body.source) form.append('source', body.source);
+    if (body.nextFollowUpAt) form.append('nextFollowUpAt', body.nextFollowUpAt);
+    if (body.followUpNote) form.append('followUpNote', body.followUpNote);
     if (body.farmPhoto) form.append('farmPhoto', body.farmPhoto as any);
     if (body.farmerPhoto) form.append('farmerPhoto', body.farmerPhoto as any);
     const res = await fetch(`${BASE_URL}/api/visits`, { method: 'POST', body: form });
@@ -884,6 +994,20 @@ export const api = {
       notes?: string;
     }
   ) => request<Crop>(`/api/crops/${cropId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+  /** FBOs matching what has been typed. Capped server-side at 20. */
+  listFbos: (search?: string) => request<Fbo[]>(`/api/fbos${qs({ search })}`),
+
+  /**
+   * Add an FBO. If one with that name already exists the server returns it
+   * rather than erroring, so two agents in the same village cannot end up with
+   * two records for one organisation.
+   */
+  createFbo: (name: string, createdBy?: string) =>
+    request<Fbo>('/api/fbos', {
+      method: 'POST',
+      body: JSON.stringify({ name, createdBy }),
+    }),
 
   // Master crop catalog (admin-defined) shown in the Add-Crop picker.
   listCropCatalog: () => request<CatalogCrop[]>('/api/crop-catalog'),

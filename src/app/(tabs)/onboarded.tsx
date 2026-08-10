@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Linking } from 'react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Modal,
@@ -94,6 +94,7 @@ function fmtDate(iso?: string) {
 }
 
 export default function OnboardedScreen() {
+  const params = useLocalSearchParams<{ scope?: string; t?: string }>();
   const theme = useTheme();
   const scheme = useColorScheme();
   const router = useRouter();
@@ -110,6 +111,12 @@ export default function OnboardedScreen() {
   const [dateFilter, setDateFilter] = useState<DateFilter | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * Set when the home screen's "Onboarded" tile sends us here. That tile counts
+   * farmers this agent registered themselves, so the list has to ask the same
+   * question or its length would not match the number that was tapped.
+   */
+  const [onlyMine, setOnlyMine] = useState(false);
 
   // Debounce the box; `search` is what actually gets sent to the server.
   useEffect(() => {
@@ -122,15 +129,17 @@ export default function OnboardedScreen() {
   const reqId = useRef(0);
 
   const load = useCallback(
-    async (q: string, range: DateFilter | null) => {
+    async (q: string, range: DateFilter | null, mine: boolean) => {
       if (!user) return;
       const id = ++reqId.current;
-      // Both the search text and the date window are applied by the server, so
-      // what arrives is already exactly what the list should show.
+      // Search, date window and scope are all applied by the server, so what
+      // arrives is already exactly what the list should show.
       const window = range ? { from: range.from, to: range.to } : undefined;
       try {
         const [f, a] = await Promise.all([
-          api.listAgronomistFarmers(user._id, q, window).catch(() => []),
+          api.listAgronomistFarmers(user._id, q, window, mine).catch(() => []),
+          // Aggregators have no "registered by" of their own, so the scope
+          // does not apply to them.
           api.listAggregators(user._id, q, window).catch(() => []),
         ]);
         if (id !== reqId.current) return; // a newer request already superseded this one
@@ -147,9 +156,26 @@ export default function OnboardedScreen() {
   // changes while focused.
   useFocusEffect(
     useCallback(() => {
-      load(search, dateFilter);
-    }, [load, search, dateFilter])
+      load(search, dateFilter, onlyMine);
+    }, [load, search, dateFilter, onlyMine])
   );
+
+  /**
+   * Arriving from the home screen's "Onboarded" tile: preset today's window.
+   * The tile counts farmers who joined this agent's list today, which is what
+   * this list shows anyway, so narrowing by date is all that is needed for the
+   * rows to match the number that was tapped.
+   */
+  useEffect(() => {
+    if (params.scope !== 'onboardedToday') return;
+    setTab('farmers');
+    setOnlyMine(true);
+    setDateFilter({
+      label: 'Today',
+      from: startOfDay(new Date()),
+      to: endOfDay(new Date()),
+    });
+  }, [params.scope, params.t]);
 
   const call = (mobile: string) => Linking.openURL(`tel:${mobile}`).catch(() => {});
 
@@ -212,15 +238,30 @@ export default function OnboardedScreen() {
 
         {/* An active filter has to be visible, or an empty list looks like lost
             data rather than a filter doing its job. */}
-        {dateFilter ? (
-          <View style={styles.activeFilter}>
-            <Ionicons name="funnel" size={12} color={GREEN} />
-            <ThemedText type="small" style={styles.activeFilterText}>
-              {dateFilter.label}
-            </ThemedText>
-            <Pressable onPress={() => setDateFilter(null)} hitSlop={10}>
-              <Ionicons name="close-circle" size={16} color={GREEN} />
-            </Pressable>
+        {dateFilter || onlyMine ? (
+          <View style={styles.filterChips}>
+            {dateFilter ? (
+              <View style={styles.activeFilter}>
+                <Ionicons name="funnel" size={12} color={GREEN} />
+                <ThemedText type="small" style={styles.activeFilterText}>
+                  {dateFilter.label}
+                </ThemedText>
+                <Pressable onPress={() => setDateFilter(null)} hitSlop={10}>
+                  <Ionicons name="close-circle" size={16} color={GREEN} />
+                </Pressable>
+              </View>
+            ) : null}
+            {onlyMine ? (
+              <View style={styles.activeFilter}>
+                <Ionicons name="person-add" size={12} color={GREEN} />
+                <ThemedText type="small" style={styles.activeFilterText}>
+                  Onboarded by you
+                </ThemedText>
+                <Pressable onPress={() => setOnlyMine(false)} hitSlop={10}>
+                  <Ionicons name="close-circle" size={16} color={GREEN} />
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -247,7 +288,12 @@ export default function OnboardedScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={() => load(search, dateFilter)} />}>
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={() => load(search, dateFilter, onlyMine)}
+            />
+          }>
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
           ) : list.length === 0 ? (
@@ -502,13 +548,17 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     ...CardShadow,
   },
+  filterChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    marginHorizontal: Spacing.four,
+    marginBottom: Spacing.two,
+  },
   activeFilter: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    alignSelf: 'flex-start',
-    marginHorizontal: Spacing.four,
-    marginBottom: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingVertical: 6,
     borderRadius: Radius.pill,

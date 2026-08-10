@@ -23,8 +23,10 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, FarmingType } from '@/lib/api';
+import { api, CatalogCrop, FarmingType, Fbo, VISIT_SOURCES, VisitSource } from '@/lib/api';
 import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
+import { CameraCapture } from '@/components/camera-capture';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -82,6 +84,8 @@ export default function OnboardFarmerScreen() {
 
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  /** How this farmer reached us. Null until one is picked, and it stays optional. */
+  const [referredBy, setReferredBy] = useState<VisitSource | null>(null);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
   const [crops, setCrops] = useState<DraftCrop[]>([]);
   const [saving, setSaving] = useState(false);
@@ -101,6 +105,20 @@ export default function OnboardFarmerScreen() {
   // The conversation is recorded from the moment this screen opens until the
   // farmer is saved, so it captures exactly what produced the registration.
   const recorder = useOnboardingRecorder();
+  // Optional photo of the farmer. Held locally until the farmer is saved, then
+  // uploaded — the registration must never depend on it.
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  /**
+   * The farmer's FBO. Searched first so the same organisation is not typed in
+   * five different ways across five farmers; only offered as new once nothing
+   * matches what has been typed.
+   */
+  const [fbo, setFbo] = useState<Fbo | null>(null);
+  const [fboQuery, setFboQuery] = useState('');
+  const [fboResults, setFboResults] = useState<Fbo[]>([]);
+  const [fboSearching, setFboSearching] = useState(false);
+  const [fboAdding, setFboAdding] = useState(false);
 
   useEffect(() => {
     api.listCropCatalog().then(setCatalog).catch(() => {});
@@ -179,6 +197,8 @@ export default function OnboardFarmerScreen() {
       const res = await api.onboardFarmer(user._id, {
         name: name.trim(),
         mobile: mobile.trim(),
+        fboId: fbo?._id ?? null,
+        referredBy,
         crops: crops.map((c) => ({
           name: c.name,
           variety: c.variety,
@@ -196,6 +216,19 @@ export default function OnboardFarmerScreen() {
       });
       const farmerId = res.farmer?._id;
       const farmerName = res.farmer?.name ?? name.trim();
+
+      // Same contract as the voice recording: the farmer is already saved, so a
+      // failed photo upload is reported but never undoes the registration.
+      if (farmerId && photo) {
+        api
+          .saveFarmerPhoto(farmerId, { uri: photo, name: 'farmer.jpg', type: 'image/jpeg' })
+          .catch(() =>
+            Alert.alert(
+              'Photo not saved',
+              'The farmer was registered, but their photo could not be uploaded.'
+            )
+          );
+      }
 
       // Stop the moment the farmer is saved, then attach the file. The upload is
       // not allowed to fail the registration, but a silent failure is worse than
@@ -224,6 +257,68 @@ export default function OnboardFarmerScreen() {
       setError(e?.message || 'Could not onboard farmer.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Look up FBOs as the agronomist types, debounced so a name is one request
+   * rather than one per keystroke. Skipped entirely once one is chosen — the
+   * question has been answered.
+   */
+  useEffect(() => {
+    const q = fboQuery.trim();
+    if (fbo || q.length < 2) {
+      setFboResults([]);
+      return;
+    }
+    let live = true;
+    setFboSearching(true);
+    const t = setTimeout(() => {
+      api
+        .listFbos(q)
+        .then((rs) => live && setFboResults(rs))
+        .catch(() => live && setFboResults([]))
+        .finally(() => live && setFboSearching(false));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [fboQuery, fbo]);
+
+  /** Add the typed name as a new FBO and select it. */
+  const addFbo = async () => {
+    const nextName = fboQuery.trim();
+    if (!nextName || fboAdding) return;
+    setFboAdding(true);
+    try {
+      // The server hands back the existing record if someone got there first.
+      const created = await api.createFbo(nextName, user?._id);
+      setFbo(created);
+      setFboQuery('');
+      setFboResults([]);
+    } catch (e: any) {
+      Alert.alert('Could not add FBO', e?.message || 'Please try again.');
+    } finally {
+      setFboAdding(false);
+    }
+  };
+
+  /**
+   * Shrink before keeping: a full-resolution phone photo is several megabytes,
+   * which is slow to send on a field connection and pointless for a portrait.
+   */
+  const capturePhoto = async (uri: string) => {
+    setCameraOpen(false);
+    try {
+      const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+        compress: 0.6,
+        format: ImageManipulator.SaveFormat.JPEG,
+      });
+      setPhoto(out.uri);
+    } catch {
+      // Never lose the shot because the resize failed.
+      setPhoto(uri);
     }
   };
 
@@ -272,6 +367,50 @@ export default function OnboardFarmerScreen() {
               style={inputStyle}
             />
 
+            {/* Optional portrait. No asterisk: a farmer who would rather not be
+                photographed still has to be registerable. */}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              Farmer photo
+            </ThemedText>
+            {photo ? (
+              <View style={styles.photoRow}>
+                <Image source={{ uri: photo }} style={styles.photo} contentFit="cover" />
+                <View style={{ flex: 1, gap: Spacing.two }}>
+                  <Pressable
+                    onPress={() => setCameraOpen(true)}
+                    style={({ pressed }) => [styles.photoAction, pressed && { opacity: 0.85 }]}>
+                    <Ionicons name="camera-outline" size={16} color={GREEN} />
+                    <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                      Retake
+                    </ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setPhoto(null)}
+                    style={({ pressed }) => [styles.photoAction, pressed && { opacity: 0.85 }]}>
+                    <Ionicons name="trash-outline" size={16} color={Brand.danger} />
+                    <ThemedText type="small" style={{ color: Brand.danger, fontWeight: '700' }}>
+                      Remove
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => setCameraOpen(true)}
+                style={({ pressed }) => [styles.photoAdd, pressed && { opacity: 0.85 }]}>
+                <View style={styles.photoAddIcon}>
+                  <Ionicons name="camera" size={20} color={GREEN} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="smallBold">Take farmer&apos;s photo</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 12 }}>
+                    Optional — helps recognise them on the next visit
+                  </ThemedText>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+              </Pressable>
+            )}
+
             <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
               Mobile <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
             </ThemedText>
@@ -283,6 +422,129 @@ export default function OnboardFarmerScreen() {
               placeholderTextColor={theme.textSecondary}
               style={inputStyle}
             />
+
+            {/*
+              How this farmer reached us. Optional — a farmer who turns up
+              through no particular channel is still a farmer, and forcing a
+              guess here would only fill the field with noise.
+            */}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              Referred by
+            </ThemedText>
+            <View style={styles.refWrap}>
+              {VISIT_SOURCES.map(({ key, label }) => {
+                const on = referredBy === key;
+                return (
+                  <Pressable
+                    key={key}
+                    // Tapping the chosen one again clears it, which is the only
+                    // way back to "not answered" once something is picked.
+                    onPress={() => setReferredBy(on ? null : key)}
+                    style={[
+                      styles.refChip,
+                      {
+                        backgroundColor: on ? Brand.primarySurface : theme.backgroundElement,
+                        borderColor: on ? GREEN : 'transparent',
+                      },
+                    ]}>
+                    <ThemedText
+                      type="small"
+                      style={{ color: on ? GREEN : theme.text, fontWeight: on ? '700' : '500' }}>
+                      {label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* FBO — search first, add only if nothing matches. */}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+              FBO
+            </ThemedText>
+            {fbo ? (
+              <View style={styles.fboPicked}>
+                <View style={styles.fboIcon}>
+                  <Ionicons name="business" size={18} color={GREEN} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="smallBold" numberOfLines={1}>
+                    {fbo.name}
+                  </ThemedText>
+                  {fbo.village || fbo.district ? (
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                      {[fbo.village, fbo.district].filter(Boolean).join(' · ')}
+                    </ThemedText>
+                  ) : null}
+                </View>
+                <Pressable onPress={() => setFbo(null)} hitSlop={10}>
+                  <Ionicons name="close-circle" size={20} color={theme.textSecondary} />
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <View style={styles.fboSearch}>
+                  <Ionicons name="search" size={16} color={theme.textSecondary} />
+                  <TextInput
+                    value={fboQuery}
+                    onChangeText={setFboQuery}
+                    placeholder="Search FBO name"
+                    placeholderTextColor={theme.textSecondary}
+                    autoCorrect={false}
+                    style={[styles.fboSearchInput, { color: theme.text }]}
+                  />
+                  {fboSearching ? <ActivityIndicator size="small" color={GREEN} /> : null}
+                </View>
+
+                {fboResults.map((r) => (
+                  <Pressable
+                    key={r._id}
+                    onPress={() => {
+                      setFbo(r);
+                      setFboQuery('');
+                    }}
+                    style={({ pressed }) => [styles.fboResult, pressed && { opacity: 0.85 }]}>
+                    <Ionicons name="business-outline" size={16} color={theme.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <ThemedText type="small" style={{ fontWeight: '600' }} numberOfLines={1}>
+                        {r.name}
+                      </ThemedText>
+                      {r.village || r.district ? (
+                        <ThemedText
+                          type="small"
+                          themeColor="textSecondary"
+                          style={{ fontSize: 11 }}
+                          numberOfLines={1}>
+                          {[r.village, r.district].filter(Boolean).join(' · ')}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                ))}
+
+                {/* Offered only once the search has come back with nothing that
+                    matches exactly — adding first and looking later is how one
+                    organisation ends up in the list three times. */}
+                {fboQuery.trim().length >= 2 &&
+                !fboSearching &&
+                !fboResults.some(
+                  (r) => r.name.trim().toLowerCase() === fboQuery.trim().toLowerCase()
+                ) ? (
+                  <Pressable
+                    onPress={addFbo}
+                    disabled={fboAdding}
+                    style={({ pressed }) => [styles.fboAdd, pressed && { opacity: 0.85 }]}>
+                    {fboAdding ? (
+                      <ActivityIndicator size="small" color={GREEN} />
+                    ) : (
+                      <Ionicons name="add-circle-outline" size={18} color={GREEN} />
+                    )}
+                    <ThemedText type="small" style={{ color: GREEN, fontWeight: '700', flex: 1 }}>
+                      Add &ldquo;{fboQuery.trim()}&rdquo; as a new FBO
+                    </ThemedText>
+                  </Pressable>
+                ) : null}
+              </>
+            )}
 
             {/* Crops — one entry per crop, each with its own area and schedule. */}
             <View style={styles.cropsHead}>
@@ -510,6 +772,10 @@ export default function OnboardFarmerScreen() {
           </View>
         </View>
       </Modal>
+
+      {cameraOpen && (
+        <CameraCapture onCapture={capturePhoto} onClose={() => setCameraOpen(false)} />
+      )}
     </View>
   );
 }
@@ -579,6 +845,15 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.five,
   },
   chipImg: { width: 22, height: 22, borderRadius: 11 },
+  // Wraps, unlike the two-up farming-type row: five labels of very different
+  // lengths do not divide into equal columns without ugly truncation.
+  refWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  refChip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    borderWidth: 2,
+  },
   typeWrap: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.two },
   typeCard: {
     flex: 1,
@@ -607,6 +882,90 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.four,
     alignItems: 'center',
     marginTop: Spacing.five,
+  },
+  fboSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.one,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.three,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
+  },
+  fboSearchInput: { flex: 1, paddingVertical: Spacing.three, fontSize: 15 },
+  fboResult: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    marginTop: Spacing.one,
+    borderRadius: Spacing.two,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+  },
+  fboAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: `${Brand.primary}66`,
+  },
+  fboPicked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.one,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    backgroundColor: Brand.primarySurface,
+    borderWidth: 1,
+    borderColor: `${Brand.primary}44`,
+  },
+  fboIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.one,
+  },
+  photo: { width: 84, height: 84, borderRadius: Spacing.three },
+  photoAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: Spacing.two,
+  },
+  photoAdd: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.one,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: `${Brand.primary}66`,
+  },
+  photoAddIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Brand.primarySurface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
   sheet: {

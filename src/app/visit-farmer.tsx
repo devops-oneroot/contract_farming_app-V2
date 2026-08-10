@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -29,9 +30,13 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
-import { api, GeoPoint, User } from '@/lib/api';
+import { api, GeoPoint, User, VisitSource, visitSourceLabel } from '@/lib/api';
 
 const GREEN = Brand.primary;
+
+/** "Mon, 15 Aug" — a follow-up is a day, so the weekday earns its place. */
+const fmtDay = (d: Date) =>
+  d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 const GREEN_SURFACE = Brand.surface;
 
 /** Camera frames are 12 MP+; send something a field connection can carry. */
@@ -94,6 +99,12 @@ export default function VisitFarmerScreen() {
     farmerMobile?: string;
     lat?: string;
     lng?: string;
+    /**
+     * Set when the visit was started from the Random visit tab. It is the
+     * farmer's own "referred by" where one was recorded, and marks the saved
+     * visit as one the agronomist chose to make rather than one off the list.
+     */
+    source?: VisitSource;
   }>();
 
   const [farmPhoto, setFarmPhoto] = useState<string | null>(null);
@@ -110,12 +121,32 @@ export default function VisitFarmerScreen() {
   const keyboardHeight = useKeyboardHeight();
   const [notesFocused, setNotesFocused] = useState(false);
 
-  // Scroll once the keyboard's height has actually been added to the content —
-  // scrolling on focus alone races the padding and lands short.
+  /**
+   * Bring the notes field back above the keyboard.
+   *
+   * Deferred by a frame on purpose. Whichever way the room gets made — Android
+   * grows the content by the keyboard's height, iOS shrinks the scroll view
+   * under it — `scrollToEnd` computes its target from the layout it can see,
+   * and asking on the same tick as the keyboard event measures the layout from
+   * before that change. It then lands short by exactly the keyboard's height,
+   * which is to say it does not move at all.
+   */
+  const revealNotes = useCallback(() => {
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, []);
+
   useEffect(() => {
-    if (notesFocused && keyboardHeight > 0) scrollRef.current?.scrollToEnd({ animated: true });
-  }, [notesFocused, keyboardHeight]);
+    if (notesFocused && keyboardHeight > 0) revealNotes();
+  }, [notesFocused, keyboardHeight, revealNotes]);
   const [notes, setNotes] = useState('');
+  /**
+   * When to come back. Required: every visit ends by deciding when the next one
+   * is, which is what puts the farmer into the "Follow up" list on the Farm
+   * Visits screen. Marking that next visit is what clears it again.
+   */
+  const [followUp, setFollowUp] = useState<Date | null>(null);
+  const [followUpNote, setFollowUpNote] = useState('');
+  const [showFollowUpPicker, setShowFollowUpPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -190,6 +221,10 @@ export default function VisitFarmerScreen() {
       setError('Please take at least one photo as proof of visit.');
       return;
     }
+    if (!followUp) {
+      setError('Please set the next follow-up date before marking this visit.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -205,13 +240,18 @@ export default function VisitFarmerScreen() {
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
+        source: params.source ?? null,
+        nextFollowUpAt: followUp ? followUp.toISOString() : null,
+        followUpNote: followUpNote.trim(),
         farmPhoto: farmUri ? { uri: farmUri, name: 'farm.jpg', type: 'image/jpeg' } : undefined,
         farmerPhoto: farmerUri ? { uri: farmerUri, name: 'farmer.jpg', type: 'image/jpeg' } : undefined,
       });
       posthog?.capture('farm_visit_logged', { hasFarmPhoto: !!farmPhoto, hasFarmerPhoto: !!farmerPhoto, hasLocation: !!coords });
-      Alert.alert('Visit marked ✓', `${params.farmerName ?? 'Farmer'} marked as visited.`, [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      Alert.alert(
+        'Visit marked ✓',
+        `${params.farmerName ?? 'Farmer'} marked as visited. They will appear in Follow up on ${fmtDay(followUp)}.`,
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
     } catch (e: any) {
       setError(e?.message || 'Could not save visit.');
     } finally {
@@ -263,14 +303,38 @@ export default function VisitFarmerScreen() {
 
           <ScrollView
             ref={scrollRef}
-            // The keyboard draws over the screen rather than resizing it, so the
-            // space it takes has to be added to the content for the last fields
-            // to be reachable at all.
-            contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+            /*
+              Android only. The keyboard draws over the screen there rather than
+              resizing it, so the space it takes has to be added to the content
+              for the last fields to be reachable at all.
+
+              iOS must NOT get this: the KeyboardAvoidingView above already
+              shrinks the scroll view by the keyboard's height, and adding the
+              same height again as padding left a second keyboard's worth of
+              blank space below the button — which `scrollToEnd` then dutifully
+              scrolled to, parking the notes field off the top of the screen.
+            */
+            contentContainerStyle={[
+              styles.body,
+              { paddingBottom: Spacing.six + (Platform.OS === 'android' ? keyboardHeight : 0) },
+            ]}
+            // Android makes room by growing the content, so this fires at the
+            // one moment the new height is real and a scroll can land on it.
+            onContentSizeChange={() => notesFocused && revealNotes()}
             keyboardShouldPersistTaps="handled">
             <ThemedText type="subtitle">{params.farmerName ?? 'Farmer'}</ThemedText>
             {params.farmerMobile ? (
               <ThemedText type="small" themeColor="textSecondary">{params.farmerMobile}</ThemedText>
+            ) : null}
+            {/* Confirms what this visit will be recorded as, before the photos
+                are taken — it is saved with the visit and cannot be changed. */}
+            {params.source ? (
+              <View style={styles.sourceChip}>
+                <Ionicons name="shuffle" size={13} color={GREEN} />
+                <ThemedText type="small" style={styles.sourceChipText}>
+                  Random visit · {visitSourceLabel(params.source)}
+                </ThemedText>
+              </View>
             ) : null}
 
             {/* Location */}
@@ -343,6 +407,90 @@ export default function VisitFarmerScreen() {
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, minHeight: 80, textAlignVertical: 'top' }]}
             />
 
+            {/* When to come back. Empty means nothing is owed. */}
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
+              Next follow-up <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
+            </ThemedText>
+            <Pressable
+              onPress={() => setShowFollowUpPicker(true)}
+              style={[
+                styles.input,
+                styles.dateBtn,
+                { backgroundColor: theme.backgroundElement },
+              ]}>
+              <Ionicons
+                name="calendar-outline"
+                size={18}
+                color={followUp ? GREEN : theme.textSecondary}
+              />
+              <ThemedText style={{ flex: 1, color: followUp ? theme.text : theme.textSecondary }}>
+                {followUp ? fmtDay(followUp) : 'Select the next visit date'}
+              </ThemedText>
+              <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+            </Pressable>
+            {showFollowUpPicker && (
+              <DateTimePicker
+                value={followUp ?? new Date(Date.now() + 7 * 86400000)}
+                mode="date"
+                minimumDate={new Date()}
+                onChange={(event, selected) => {
+                  if (Platform.OS !== 'ios') setShowFollowUpPicker(false);
+                  if (event.type === 'set' && selected) setFollowUp(selected);
+                }}
+              />
+            )}
+            {Platform.OS === 'ios' && showFollowUpPicker && (
+              <Pressable onPress={() => setShowFollowUpPicker(false)} style={styles.doneBtn}>
+                <ThemedText type="linkPrimary">Done</ThemedText>
+              </Pressable>
+            )}
+            <TextInput
+              value={followUpNote}
+              onChangeText={setFollowUpNote}
+              placeholder="Why come back? (optional)"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+
+            {/* The two things most often needed while standing on the farm.
+                Both are separate records, so they open their own screens
+                rather than being folded into this form. */}
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
+              While you are here
+            </ThemedText>
+            <View style={styles.actionRow}>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: '/report-disease',
+                    params: { farmerId: params.farmerId, farmerName: params.farmerName ?? '' },
+                  } as never)
+                }
+                style={({ pressed }) => [styles.action, pressed && { opacity: 0.85 }]}>
+                <View style={[styles.actionIcon, { backgroundColor: Brand.dangerSurface }]}>
+                  <Ionicons name="bug" size={18} color={Brand.danger} />
+                </View>
+                <ThemedText type="small" style={styles.actionLabel}>
+                  Report crop disease
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  router.push({
+                    pathname: '/give-product',
+                    params: { farmerId: params.farmerId, farmerName: params.farmerName ?? '' },
+                  } as never)
+                }
+                style={({ pressed }) => [styles.action, pressed && { opacity: 0.85 }]}>
+                <View style={[styles.actionIcon, { backgroundColor: Brand.secondarySurface }]}>
+                  <Ionicons name="cart" size={18} color={Brand.secondary} />
+                </View>
+                <ThemedText type="small" style={styles.actionLabel}>
+                  Give product
+                </ThemedText>
+              </Pressable>
+            </View>
+
             {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
 
             <Pressable onPress={markVisited} disabled={saving} style={[styles.submitBtn, { opacity: saving ? 0.6 : 1 }]}>
@@ -367,6 +515,27 @@ export default function VisitFarmerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  dateBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  doneBtn: { alignSelf: 'flex-end', padding: Spacing.two },
+  actionRow: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
+  action: {
+    flex: 1,
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
+    backgroundColor: '#fff',
+  },
+  actionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionLabel: { fontWeight: '700', textAlign: 'center', fontSize: 12 },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -394,6 +563,18 @@ const styles = StyleSheet.create({
   },
   navNote: { textAlign: 'center' },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
+  sourceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    marginTop: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 4,
+    borderRadius: Spacing.four,
+    backgroundColor: Brand.surface,
+  },
+  sourceChipText: { color: GREEN, fontWeight: '700', fontSize: 12 },
   locCard: {
     flexDirection: 'row',
     alignItems: 'center',
