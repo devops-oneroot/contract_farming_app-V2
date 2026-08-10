@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
-import { api, TrackPoint } from './api';
+import { api, TrackingPause, TrackPoint } from './api';
 
 export const TRACKING_TASK = 'oneroot-location-tracking';
 
@@ -90,6 +90,44 @@ TaskManager.defineTask(TRACKING_TASK, async ({ data, error }) => {
  * Android asks for them separately, and "while using the app" is not enough to
  * keep recording once the phone is locked.
  */
+/**
+ * Start the background location task, unless it is already running.
+ *
+ * The options live here rather than at each call site because they are the
+ * contract with the OS: change the interval in one place and forget another,
+ * and the route silently records at two different resolutions depending on
+ * whether the day was started, resumed from a pause, or picked up on relaunch.
+ */
+async function beginLocationUpdates() {
+  const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
+  if (running) return;
+
+  await Location.startLocationUpdatesAsync(TRACKING_TASK, {
+    accuracy: Location.Accuracy.Balanced,
+    timeInterval: TIME_INTERVAL_MS,
+    distanceInterval: DISTANCE_INTERVAL_M,
+    pausesUpdatesAutomatically: false,
+    // Android requires a visible notification for background location. It also
+    // makes the tracking honest: the agent can always see it is running.
+    foregroundService: {
+      notificationTitle: 'OneRoot is tracking your day',
+      notificationBody: 'Your route is being recorded. Tap END in the app to stop.',
+      notificationColor: '#2E9E5B',
+    },
+  });
+}
+
+/** Stop the background location task, unless it is already stopped. */
+async function endLocationUpdates() {
+  const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
+  if (running) await Location.stopLocationUpdatesAsync(TRACKING_TASK).catch(() => {});
+}
+
+/** Is this session currently paused? A pause with no `resumedAt` is running. */
+export function isPaused(session?: { pauses?: TrackingPause[] } | null) {
+  return !!session?.pauses?.some((p) => !p.resumedAt);
+}
+
 export async function startTracking(
   userId: string,
   role?: string,
@@ -111,32 +149,51 @@ export async function startTracking(
   await AsyncStorage.setItem(SESSION_KEY, session._id);
   await writeBuffer([]);
 
-  const already = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
-  if (already) await Location.stopLocationUpdatesAsync(TRACKING_TASK).catch(() => {});
-
-  await Location.startLocationUpdatesAsync(TRACKING_TASK, {
-    accuracy: Location.Accuracy.Balanced,
-    timeInterval: TIME_INTERVAL_MS,
-    distanceInterval: DISTANCE_INTERVAL_M,
-    pausesUpdatesAutomatically: false,
-    // Android requires a visible notification for background location. It also
-    // makes the tracking honest: the agent can always see it is running.
-    foregroundService: {
-      notificationTitle: 'OneRoot is tracking your day',
-      notificationBody: 'Your route is being recorded. Tap END in the app to stop.',
-      notificationColor: '#2E9E5B',
-    },
-  });
+  await endLocationUpdates();
+  await beginLocationUpdates();
 
   return session;
+}
+
+/**
+ * Pause the day: send whatever is buffered, tell the server why, and stop the
+ * location updates.
+ *
+ * Updates are stopped rather than merely ignored so the pause costs no battery
+ * and records no personal movement in the first place. The server also drops
+ * any segment straddling the pause, so nothing slips through either way.
+ */
+export async function pauseTracking(
+  reason: string,
+  photo: { uri: string; name: string; type: string }
+) {
+  const sessionId = await getActiveSessionId();
+  if (!sessionId) return null;
+
+  await flushBuffer();
+  const res = await api.pauseTracking(sessionId, reason, photo);
+
+  await endLocationUpdates();
+  return res;
+}
+
+/** Pick the day back up: restart location updates on the same session. */
+export async function resumePausedTracking() {
+  const sessionId = await getActiveSessionId();
+  if (!sessionId) return null;
+
+  const res = await api.resumeTracking(sessionId);
+  await beginLocationUpdates();
+  return res;
 }
 
 /** Stop tracking and flush whatever is still buffered into the closing session. */
 export async function stopTracking(photo?: { uri: string; name: string; type: string }) {
   const sessionId = await getActiveSessionId();
 
-  const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
-  if (running) await Location.stopLocationUpdatesAsync(TRACKING_TASK).catch(() => {});
+  // Unconditionally, and before anything can fail: whatever else happens, the
+  // phone must stop recording. Already stopped if the day was paused.
+  await endLocationUpdates();
 
   if (!sessionId) return null;
   const trailing = await readBuffer();
@@ -166,23 +223,16 @@ export async function resumeTracking(userId: string) {
   }
 
   await AsyncStorage.setItem(SESSION_KEY, session._id);
-  const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
-  if (!running) {
+
+  if (isPaused(session)) {
+    // The day is open but the agent stepped out of it. Reopening the app must
+    // not quietly start recording again — only the RESUME button does that.
+    await endLocationUpdates();
+  } else {
     const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
-    if (bg?.status === 'granted') {
-      await Location.startLocationUpdatesAsync(TRACKING_TASK, {
-        accuracy: Location.Accuracy.Balanced,
-        timeInterval: TIME_INTERVAL_MS,
-        distanceInterval: DISTANCE_INTERVAL_M,
-        pausesUpdatesAutomatically: false,
-        foregroundService: {
-          notificationTitle: 'OneRoot is tracking your day',
-          notificationBody: 'Your route is being recorded. Tap END in the app to stop.',
-          notificationColor: '#2E9E5B',
-        },
-      }).catch(() => {});
-    }
+    if (bg?.status === 'granted') await beginLocationUpdates().catch(() => {});
   }
+
   await flushBuffer();
   return session;
 }

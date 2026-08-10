@@ -25,10 +25,21 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, DayStats, TrackingSession } from '@/lib/api';
-import { flushBuffer, resumeTracking, startTracking, stopTracking } from '@/lib/tracking';
+import {
+  flushBuffer,
+  isPaused,
+  pauseTracking,
+  resumePausedTracking,
+  resumeTracking,
+  startTracking,
+  stopTracking,
+} from '@/lib/tracking';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
+// Paused is neither running nor stopped, so it gets its own colour rather than
+// borrowing the green of a live day or the red of an ended one.
+const AMBER = '#B45309';
 
 // How often the screen asks the server for the updated total while tracking.
 // The route itself is sent by the background task; this is only the display.
@@ -62,7 +73,7 @@ async function shrink(uri: string) {
 }
 
 /** What the camera is currently being opened for. */
-type Capturing = 'start' | 'end' | 'no_field';
+type Capturing = 'start' | 'end' | 'no_field' | 'pause';
 
 /**
  * Start and end a tracked work day, and see what it added up to. The route is
@@ -88,6 +99,12 @@ export default function TrackingScreen() {
   const [noFieldPhoto, setNoFieldPhoto] = useState<string | null>(null);
   const [reason, setReason] = useState('');
 
+  // Stepping out of the day. Kept apart from `reason` above so a half-typed
+  // no-field reason can never be filed as a pause, or the other way round.
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseReason, setPauseReason] = useState('');
+  const [pausePhoto, setPausePhoto] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!user) return;
     try {
@@ -112,7 +129,9 @@ export default function TrackingScreen() {
 
   // While tracking, push anything buffered and refresh the totals.
   useEffect(() => {
-    if (!session || session.endAt) return;
+    // Nothing is being recorded while paused, so there is nothing to push or
+    // refresh — polling would only spend the agent's data.
+    if (!session || session.endAt || isPaused(session)) return;
     const id = setInterval(async () => {
       await flushBuffer();
       if (user) api.getDayStats(user._id).then(setStats).catch(() => {});
@@ -154,6 +173,65 @@ export default function TrackingScreen() {
     }
   };
 
+  const doPause = async () => {
+    if (!pauseReason.trim()) {
+      Alert.alert('Reason needed', 'Say why you are pausing.');
+      return;
+    }
+    if (!pausePhoto) {
+      Alert.alert('Photo needed', 'Take a photo of where you are pausing.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const uri = await shrink(pausePhoto);
+      await pauseTracking(pauseReason.trim(), { uri, name: 'pause.jpg', type: 'image/jpeg' });
+      posthog?.capture('tracking_paused', { reason: pauseReason.trim() });
+      setPauseOpen(false);
+      setPauseReason('');
+      setPausePhoto(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Could not pause', e?.message || 'Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Backing out drops the draft, so a stale reason and photo can never be
+  // filed against a later pause.
+  const closePause = () => {
+    setPauseOpen(false);
+    setPauseReason('');
+    setPausePhoto(null);
+  };
+
+  /**
+   * Open the camera for a pause photo.
+   *
+   * The sheet is closed first: a React Native Modal is its own native window on
+   * Android, so the camera — an absolutely positioned view in the activity —
+   * would otherwise be drawn underneath it and the agent would be shooting
+   * blind. `onCapture` puts the sheet back.
+   */
+  const shootPause = () => {
+    setPauseOpen(false);
+    setCapturing('pause');
+  };
+
+  const doResume = async () => {
+    setBusy(true);
+    try {
+      await resumePausedTracking();
+      posthog?.capture('tracking_resumed');
+      await load();
+    } catch (e: any) {
+      Alert.alert('Could not resume', e?.message || 'Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The camera is shared by all three flows, so route the shot by what opened it.
   const onCapture = async (uri: string) => {
     const which = capturing;
@@ -161,13 +239,11 @@ export default function TrackingScreen() {
     if (which === 'start') await begin(uri);
     else if (which === 'end') await end(uri);
     else if (which === 'no_field') setNoFieldPhoto(uri);
+    else if (which === 'pause') {
+      setPausePhoto(uri);
+      setPauseOpen(true); // hidden for the shot; bring the sheet back with it
+    }
   };
-
-  const confirmEnd = () =>
-    Alert.alert('End tracking?', 'Take a photo of where you are finishing.', [
-      { text: 'Keep tracking', style: 'cancel' },
-      { text: 'Take end photo', onPress: () => setCapturing('end') },
-    ]);
 
   const saveNoField = async () => {
     if (!user) return;
@@ -195,6 +271,9 @@ export default function TrackingScreen() {
   };
 
   const tracking = !!session && !session.endAt;
+  const paused = tracking && isPaused(session);
+  // The pause still running, so the screen can show when it began and why.
+  const openPause = session?.pauses?.find((x) => !x.resumedAt);
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
@@ -215,14 +294,29 @@ export default function TrackingScreen() {
             refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
             {/* The one control: start or end. */}
             <ThemedView type="backgroundElement" style={styles.hero}>
-              <View style={[styles.dot, { backgroundColor: tracking ? GREEN : theme.textSecondary }]} />
+              <View
+                style={[
+                  styles.dot,
+                  { backgroundColor: paused ? AMBER : tracking ? GREEN : theme.textSecondary },
+                ]}
+              />
               <ThemedText type="smallBold" style={{ fontSize: 16 }}>
-                {tracking ? 'Tracking your day' : 'Not tracking'}
+                {paused ? 'Paused' : tracking ? 'Tracking your day' : 'Not tracking'}
               </ThemedText>
               {tracking && session ? (
-                <ThemedText type="small" themeColor="textSecondary">
-                  Started {fmtTime(session.startAt)} · {hhmm(session.startAt)}
-                </ThemedText>
+                <>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Started {fmtTime(session.startAt)} · {hhmm(session.startAt)}
+                  </ThemedText>
+                  {paused && openPause ? (
+                    <ThemedText
+                      type="small"
+                      style={{ color: AMBER, textAlign: 'center', fontWeight: '700' }}>
+                      Paused {fmtTime(openPause.pausedAt)} · {hhmm(openPause.pausedAt)}
+                      {openPause.reason ? `\n${openPause.reason}` : ''}
+                    </ThemedText>
+                  ) : null}
+                </>
               ) : (
                 <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                   Start when you set off. Your route keeps recording with the phone locked.
@@ -230,7 +324,9 @@ export default function TrackingScreen() {
               )}
 
               <Pressable
-                onPress={() => (tracking ? confirmEnd() : setCapturing('start'))}
+                // END goes straight to the camera. There is no "are you sure":
+                // the day is over, and the next one is a fresh START.
+                onPress={() => setCapturing(tracking ? 'end' : 'start')}
                 disabled={busy}
                 style={[
                   styles.bigBtn,
@@ -247,8 +343,38 @@ export default function TrackingScreen() {
                   </>
                 )}
               </Pressable>
-              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
-                {tracking ? 'A photo is taken when you end.' : 'A photo is taken when you start.'}
+              {/*
+                * Stepping out of the day without ending it — lunch, a personal
+                * errand, a breakdown. Recording stops and the distance covered
+                * in between is left out of the day's kilometres.
+                */}
+              {tracking ? (
+                <Pressable
+                  onPress={() => (paused ? doResume() : setPauseOpen(true))}
+                  disabled={busy}
+                  style={[styles.pauseBtn, { borderColor: paused ? GREEN : AMBER, opacity: busy ? 0.6 : 1 }]}>
+                  <Ionicons
+                    name={paused ? 'play' : 'pause'}
+                    size={18}
+                    color={paused ? GREEN : AMBER}
+                  />
+                  <ThemedText
+                    type="smallBold"
+                    style={{ color: paused ? GREEN : AMBER, fontSize: 15 }}>
+                    {paused ? 'RESUME' : 'PAUSE'}
+                  </ThemedText>
+                </Pressable>
+              ) : null}
+
+              <ThemedText
+                type="small"
+                themeColor="textSecondary"
+                style={{ fontSize: 11, textAlign: 'center' }}>
+                {paused
+                  ? 'Your route is not being recorded. Tap RESUME when you are back.'
+                  : tracking
+                    ? 'A photo is taken when you end.'
+                    : 'A photo is taken when you start.'}
               </ThemedText>
 
               {/* Some days the weather decides. Record that rather than nothing. */}
@@ -348,6 +474,73 @@ export default function TrackingScreen() {
       </SafeAreaView>
 
       {/* Why there was no field work today. */}
+      {/* Why the day is being paused. Required — an unexplained gap in the
+          route is exactly what this is meant to prevent. */}
+      <Modal visible={pauseOpen} transparent animationType="slide" onRequestClose={closePause}>
+        <View style={styles.backdrop}>
+          <View style={[styles.sheet, { backgroundColor: screenBg }]}>
+            <View style={styles.sheetBar}>
+              <Pressable onPress={closePause} hitSlop={10}>
+                <Ionicons name="close" size={24} color={theme.text} />
+              </Pressable>
+              <ThemedText type="smallBold">Pause tracking</ThemedText>
+              <View style={{ width: 24 }} />
+            </View>
+
+            <View style={styles.sheetBody}>
+              <ThemedText type="small" themeColor="textSecondary">
+                Your day stays open. Recording stops until you resume, and the distance you
+                cover in between is left out of today&apos;s kilometres.
+              </ThemedText>
+
+              <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>
+                Reason <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
+              </ThemedText>
+              <TextInput
+                value={pauseReason}
+                onChangeText={setPauseReason}
+                placeholder="e.g. Lunch break, going home for an hour"
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                style={[
+                  styles.reasonInput,
+                  { color: theme.text, backgroundColor: theme.backgroundElement },
+                ]}
+              />
+
+              <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>
+                Photo <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
+              </ThemedText>
+              {pausePhoto ? (
+                <Pressable onPress={shootPause}>
+                  <RNImage source={{ uri: pausePhoto }} style={styles.startPhoto} resizeMode="cover" />
+                </Pressable>
+              ) : (
+                <Pressable onPress={shootPause} style={styles.photoBtn}>
+                  <Ionicons name="camera-outline" size={24} color={AMBER} />
+                  <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
+                    Take a photo
+                  </ThemedText>
+                </Pressable>
+              )}
+
+              <Pressable
+                onPress={doPause}
+                disabled={busy}
+                style={[styles.bigBtn, { backgroundColor: AMBER, opacity: busy ? 0.6 : 1 }]}>
+                {busy ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                    Pause tracking
+                  </ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={noFieldOpen} transparent animationType="slide" onRequestClose={() => setNoFieldOpen(false)}>
         <View style={styles.backdrop}>
           <View style={[styles.sheet, { backgroundColor: screenBg }]}>
@@ -412,7 +605,17 @@ export default function TrackingScreen() {
         </View>
       </Modal>
 
-      {capturing && <CameraCapture onCapture={onCapture} onClose={() => setCapturing(null)} />}
+      {capturing && (
+        <CameraCapture
+          onCapture={onCapture}
+          onClose={() => {
+            // Backing out of the camera must return to the pause sheet, or the
+            // reason typed a moment ago is stranded behind a closed modal.
+            if (capturing === 'pause') setPauseOpen(true);
+            setCapturing(null);
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -471,6 +674,16 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Spacing.three,
     marginBottom: Spacing.two,
+  },
+  pauseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    alignSelf: 'stretch',
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: Spacing.three,
   },
   noFieldLink: {
     flexDirection: 'row',

@@ -238,6 +238,17 @@ export type TrackPoint = {
   accuracy?: number | null;
 };
 
+/**
+ * A stretch the agent stepped out of the day. `resumedAt` is null while the
+ * pause is still running, which is what makes "paused right now" one check.
+ */
+export type TrackingPause = {
+  pausedAt: string;
+  resumedAt: string | null;
+  reason: string;
+  photoUrl?: string;
+};
+
 /** A tracked work session: START to END, with the route walked in between. */
 export type TrackingSession = {
   _id: string;
@@ -251,6 +262,8 @@ export type TrackingSession = {
   endAt: string | null;
   startPhotoUrl: string;
   endPhotoUrl: string;
+  /** Stretches the agent paused out of the day, with their reasons. */
+  pauses?: TrackingPause[];
   /** Omitted by the list endpoints — only the single-session fetch carries it. */
   points?: TrackPoint[];
   distanceKm: number;
@@ -782,6 +795,35 @@ export const api = {
   },
 
   /** The session still running for this user, if any — null when none is. */
+  /**
+   * Step out of the working day, with a reason. The session stays open — the
+   * server stops counting distance until it is resumed.
+   */
+  pauseTracking: async (
+    sessionId: string,
+    reason: string,
+    photo: { uri: string; name: string; type: string }
+  ): Promise<{ _id: string; paused: true; pauses: TrackingPause[]; distanceKm: number }> => {
+    // Multipart, so the photo rides along with the reason in one request —
+    // a pause that saved without its photo would be the gap it exists to close.
+    const form = new FormData();
+    form.append('reason', reason);
+    form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/tracking/${sessionId}/pause`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not pause');
+    return data as any;
+  },
+
+  resumeTracking: (sessionId: string) =>
+    request<{ _id: string; paused: false; pauses: TrackingPause[]; distanceKm: number }>(
+      `/api/tracking/${sessionId}/resume`,
+      { method: 'POST' }
+    ),
+
   currentTracking: (userId: string) =>
     request<TrackingSession | null>(`/api/tracking/current?user=${encodeURIComponent(userId)}`),
 

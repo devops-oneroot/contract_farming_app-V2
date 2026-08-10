@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, {
+  DateTimePickerAndroid,
+} from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +24,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CatalogCrop, FarmingType, Fbo, VISIT_SOURCES, VisitSource } from '@/lib/api';
 import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
@@ -120,6 +123,33 @@ export default function OnboardFarmerScreen() {
   const [fboSearching, setFboSearching] = useState(false);
   const [fboAdding, setFboAdding] = useState(false);
 
+  /**
+   * Bringing the FBO field above the keyboard.
+   *
+   * Android has run edge-to-edge since SDK 54, so the keyboard is drawn OVER
+   * the window rather than shrinking it, and `KeyboardAvoidingView` has no
+   * behaviour to apply there. A field partway down the form ends up underneath
+   * it with no way to scroll further, because there is no content below to
+   * scroll to. Two things fix that: real padding the height of the keyboard,
+   * and scrolling the field to the top of what is left.
+   */
+  const scrollRef = useRef<ScrollView>(null);
+  const keyboardHeight = useKeyboardHeight();
+  const fboY = useRef(0);
+  const [fboFocused, setFboFocused] = useState(false);
+
+  const revealFbo = useCallback(() => {
+    // A frame's delay so the padding below has been applied before the offset
+    // is computed against it.
+    requestAnimationFrame(() =>
+      scrollRef.current?.scrollTo({ y: Math.max(fboY.current - 24, 0), animated: true })
+    );
+  }, []);
+
+  useEffect(() => {
+    if (fboFocused && keyboardHeight > 0) revealFbo();
+  }, [fboFocused, keyboardHeight, revealFbo]);
+
   useEffect(() => {
     api.listCropCatalog().then(setCatalog).catch(() => {});
     recorder.begin();
@@ -148,6 +178,33 @@ export default function OnboardFarmerScreen() {
   const onDateChange = (event: { type: string }, selected?: Date) => {
     if (Platform.OS !== 'ios') setShowDatePicker(false);
     if (event.type === 'set' && selected) setDop(selected);
+  };
+
+  /**
+   * Open the planting-date picker.
+   *
+   * Android goes through the imperative API rather than rendering the
+   * declarative component. This field lives inside the crop sheet, which is a
+   * React Native <Modal>, and a picker mounted in there puts its native dialog
+   * behind the modal window — the tap appears to do nothing and the date never
+   * changes. `DateTimePickerAndroid.open` shows the dialog above everything.
+   *
+   * `maximumDate` is today: a planting date is when the crop went in, so it is
+   * always in the past. Crops sown weeks or months ago are the normal case.
+   */
+  const openDopPicker = () => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: dop ?? new Date(),
+        mode: 'date',
+        maximumDate: new Date(),
+        onChange: (event, selected) => {
+          if (event.type === 'set' && selected) setDop(selected);
+        },
+      });
+      return;
+    }
+    setShowDatePicker(true);
   };
 
   const addCrop = () => {
@@ -337,7 +394,13 @@ export default function OnboardFarmerScreen() {
             <View style={{ width: 26 }} />
           </View>
 
-          <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={scrollRef}
+            // The keyboard's height becomes real space at the foot of the form,
+            // so there is somewhere to scroll to once it opens.
+            contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => fboFocused && revealFbo()}>
             {/* Never record silently — the agent and the farmer can both see it. */}
             {recorder.recording ? (
               <View style={[styles.recBar, { backgroundColor: Brand.dangerSurface }]}>
@@ -458,7 +521,15 @@ export default function OnboardFarmerScreen() {
             </View>
 
             {/* FBO — search first, add only if nothing matches. */}
-            <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+            <ThemedText
+              type="small"
+              themeColor="textSecondary"
+              style={styles.fieldLabel}
+              // Where the section starts, measured once laid out, so focusing
+              // the input can scroll exactly here.
+              onLayout={(e) => {
+                fboY.current = e.nativeEvent.layout.y;
+              }}>
               FBO
             </ThemedText>
             {fbo ? (
@@ -490,6 +561,8 @@ export default function OnboardFarmerScreen() {
                     placeholder="Search FBO name"
                     placeholderTextColor={theme.textSecondary}
                     autoCorrect={false}
+                    onFocus={() => setFboFocused(true)}
+                    onBlur={() => setFboFocused(false)}
                     style={[styles.fboSearchInput, { color: theme.text }]}
                   />
                   {fboSearching ? <ActivityIndicator size="small" color={GREEN} /> : null}
@@ -736,17 +809,19 @@ export default function OnboardFarmerScreen() {
                     D.O.P (Date of Planting)
                   </ThemedText>
                   <Pressable
-                    onPress={() => setShowDatePicker(true)}
+                    onPress={openDopPicker}
                     style={[styles.input, styles.dateBtn, { backgroundColor: theme.backgroundElement }]}>
                     <ThemedText style={{ color: dop ? theme.text : theme.textSecondary }}>
                       {dop ? formatDate(dop) : '📅 Select date'}
                     </ThemedText>
                   </Pressable>
-                  {showDatePicker && (
+                  {/* iOS only — Android uses the imperative dialog above. */}
+                  {Platform.OS === 'ios' && showDatePicker && (
                     <DateTimePicker
                       value={dop ?? new Date()}
                       mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      display="spinner"
+                      maximumDate={new Date()}
                       onChange={onDateChange}
                     />
                   )}
@@ -756,7 +831,8 @@ export default function OnboardFarmerScreen() {
                     </Pressable>
                   )}
                   <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
-                    The Package of Practices counts from this date. It can be filled in later.
+                    When the crop was actually sown — weeks or months back is normal. The Package
+                    of Practices counts from this date, and it can be filled in later.
                   </ThemedText>
                 </>
               )}
