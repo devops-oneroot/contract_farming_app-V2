@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { PhotoViewer } from '@/components/photo-viewer';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -60,6 +61,9 @@ export default function DiseaseReportsScreen() {
   const [answering, setAnswering] = useState<DiseaseReport | null>(null);
   const [advice, setAdvice] = useState('');
   const [sending, setSending] = useState(false);
+  // A 110px thumbnail is useless for spotting a leaf spot, so any photo opens
+  // full screen; the whole photo set travels with it so you can swipe across.
+  const [viewer, setViewer] = useState<{ photos: string[]; index: number } | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -194,8 +198,13 @@ export default function DiseaseReportsScreen() {
                   {r.photos.length > 0 && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: Spacing.two }}>
                       <View style={{ flexDirection: 'row', gap: Spacing.two }}>
-                        {r.photos.map((p) => (
-                          <RNImage key={p} source={{ uri: p }} style={styles.photo} resizeMode="cover" />
+                        {r.photos.map((p, i) => (
+                          <Pressable key={p} onPress={() => setViewer({ photos: r.photos, index: i })}>
+                            <RNImage source={{ uri: p }} style={styles.photo} resizeMode="cover" />
+                            <View style={styles.photoZoom}>
+                              <Ionicons name="expand-outline" size={13} color="#fff" />
+                            </View>
+                          </Pressable>
                         ))}
                       </View>
                     </ScrollView>
@@ -236,6 +245,12 @@ export default function DiseaseReportsScreen() {
           </ScrollView>
         )}
       </SafeAreaView>
+
+      <PhotoViewer
+        photos={viewer?.photos ?? null}
+        initialIndex={viewer?.index ?? 0}
+        onClose={() => setViewer(null)}
+      />
 
       {/* Answer sheet */}
       <Modal visible={!!answering} transparent animationType="slide" onRequestClose={() => setAnswering(null)}>
@@ -303,6 +318,15 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
   badge: { paddingHorizontal: Spacing.two, paddingVertical: 2, borderRadius: Spacing.five },
   photo: { width: 110, height: 110, borderRadius: Spacing.three, backgroundColor: '#d8d8d8' },
+  // A small hint that the thumbnail is not the whole picture.
+  photoZoom: {
+    position: 'absolute',
+    right: 5,
+    bottom: 5,
+    padding: 3,
+    borderRadius: Spacing.five,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
   reply: {
     borderLeftWidth: 3,
     paddingLeft: Spacing.three,

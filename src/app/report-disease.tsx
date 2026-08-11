@@ -3,7 +3,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -72,6 +72,26 @@ export default function ReportDiseaseScreen() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const [noteFocused, setNoteFocused] = useState(false);
+
+  /**
+   * Bring "What are you seeing?" back above the keyboard.
+   *
+   * Deferred by a frame on purpose. Whichever way the room gets made — Android
+   * grows the content by the keyboard's height, iOS shrinks the scroll view
+   * under it — `scrollToEnd` computes its target from the layout it can see,
+   * and asking on the same tick as the keyboard event measures the layout from
+   * before that change, landing short by exactly the keyboard's height.
+   */
+  const revealNote = useCallback(() => {
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, []);
+
+  useEffect(() => {
+    if (noteFocused && keyboardHeight > 0) revealNote();
+  }, [noteFocused, keyboardHeight, revealNote]);
 
   useEffect(() => {
     api.listSeniorAgronomists().then(setSeniors).catch(() => {});
@@ -162,7 +182,25 @@ export default function ReportDiseaseScreen() {
           </View>
 
           <ScrollView
-            contentContainerStyle={[styles.body, { paddingBottom: Spacing.six + keyboardHeight }]}
+            ref={scrollRef}
+            /*
+              Android only. The keyboard draws over the screen there rather than
+              resizing it, so the space it takes has to be added to the content
+              for the last fields to be reachable at all.
+
+              iOS must NOT get this: the KeyboardAvoidingView above already
+              shrinks the scroll view by the keyboard's height, and adding the
+              same height again as padding leaves a second keyboard's worth of
+              blank space below the button, which `scrollToEnd` then scrolls to
+              — parking the note field off the top of the screen.
+            */
+            contentContainerStyle={[
+              styles.body,
+              { paddingBottom: Spacing.six + (Platform.OS === 'android' ? keyboardHeight : 0) },
+            ]}
+            // Android makes room by growing the content, so this fires at the
+            // one moment the new height is real and a scroll can land on it.
+            onContentSizeChange={() => noteFocused && revealNote()}
             keyboardShouldPersistTaps="handled">
             <ThemedText type="small" themeColor="textSecondary">
               {params.farmerName ? `${params.farmerName}'s farm` : 'This farm'} · sent to every senior
@@ -280,6 +318,8 @@ export default function ReportDiseaseScreen() {
               placeholder="e.g. Yellow spots spreading on lower leaves for 3 days"
               placeholderTextColor={theme.textSecondary}
               multiline
+              onFocus={() => setNoteFocused(true)}
+              onBlur={() => setNoteFocused(false)}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
 
