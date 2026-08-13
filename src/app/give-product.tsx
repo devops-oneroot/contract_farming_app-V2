@@ -29,7 +29,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
-import { api, Crop, Product } from '@/lib/api';
+import { api, Crop, Product, ProductSale } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -44,6 +44,16 @@ type Step = 'pick' | 'confirm';
 type Line = { qty: number; price: string; before: string | null };
 
 const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+/** Rough, and deliberately so: "3 months ago" is what an agent needs, not a date. */
+function since(iso: string) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.round(days / 30);
+  return months <= 1 ? '1 month ago' : `${months} months ago`;
+}
 
 /** Must match AFTER_PHOTO_DAYS in the backend's productSale controller. */
 const AFTER_PHOTO_DAYS = 7;
@@ -84,6 +94,7 @@ export default function GiveProductScreen() {
 
   const [crops, setCrops] = useState<Crop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [past, setPast] = useState<ProductSale[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [step, setStep] = useState<Step>('pick');
@@ -112,12 +123,15 @@ export default function GiveProductScreen() {
     if (!farmerId) return;
     (async () => {
       try {
-        const [cropList, productList] = await Promise.all([
+        const [cropList, productList, saleList] = await Promise.all([
           api.listCrops(farmerId),
           api.listProducts(),
+          // History is context, not a prerequisite: never block the sale on it.
+          api.listProductSales({ farmerId }).catch(() => [] as ProductSale[]),
         ]);
         setCrops(cropList);
         setProducts(productList);
+        setPast(saleList);
         // One crop means there is nothing to choose — pick it for them.
         if (cropList.length === 1) setCropId(cropList[0]._id);
       } catch (e: any) {
@@ -154,6 +168,40 @@ export default function GiveProductScreen() {
       return true;
     });
   }, [products, crop, query]);
+
+  /**
+   * What this farmer has already been given, newest first, one entry per
+   * product rather than one per sale — an agent about to hand something over
+   * needs "has he had this before, and how long ago", not a ledger. Repeats are
+   * counted instead of repeated, since a product given four times is the single
+   * most useful thing on the strip.
+   */
+  const givenBefore = useMemo(() => {
+    const byProduct = new Map<
+      string,
+      { name: string; unit: string; imageUrl: string; qty: number; at: string; times: number }
+    >();
+    const newestFirst = [...past].sort(
+      (a, b) => new Date(b.soldAt).getTime() - new Date(a.soldAt).getTime()
+    );
+    for (const sale of newestFirst) {
+      for (const it of sale.items) {
+        const seen = byProduct.get(it.product);
+        // First time through is the most recent, so later ones only count.
+        if (seen) seen.times += 1;
+        else
+          byProduct.set(it.product, {
+            name: it.name,
+            unit: it.unit,
+            imageUrl: it.imageUrl,
+            qty: it.qty,
+            at: sale.soldAt,
+            times: 1,
+          });
+      }
+    }
+    return [...byProduct.entries()].map(([id, v]) => ({ id, ...v }));
+  }, [past]);
 
   const inCart = products.filter((p) => cart[p._id]);
   const itemCount = inCart.reduce((s, p) => s + cart[p._id].qty, 0);
@@ -316,6 +364,54 @@ export default function GiveProductScreen() {
                         </Pressable>
                       );
                     })}
+                  </View>
+                )}
+
+                {/* What he already has. Shown before the catalogue on purpose:
+                    the question "has he had this already" comes before the
+                    question "what shall I give him". */}
+                {givenBefore.length > 0 && (
+                  <View style={{ marginTop: Spacing.four }}>
+                    <ThemedText type="small" themeColor="textSecondary" style={{ fontWeight: '700' }}>
+                      Given before
+                    </ThemedText>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={{ marginTop: Spacing.two }}>
+                      <View style={{ flexDirection: 'row', gap: Spacing.two }}>
+                        {givenBefore.map((g) => (
+                          <View
+                            key={g.id}
+                            style={[styles.pastCard, { backgroundColor: theme.backgroundElement }]}>
+                            <View style={styles.pastTop}>
+                              {g.imageUrl ? (
+                                <Image source={{ uri: g.imageUrl }} style={styles.pastImg} contentFit="cover" />
+                              ) : (
+                                <View style={[styles.pastImg, styles.pastImgEmpty]}>
+                                  <Ionicons name="cube-outline" size={16} color={theme.textSecondary} />
+                                </View>
+                              )}
+                              {/* Four times means something the one-off count cannot say. */}
+                              {g.times > 1 && (
+                                <View style={styles.pastTimes}>
+                                  <ThemedText type="small" style={styles.pastTimesText}>
+                                    ×{g.times}
+                                  </ThemedText>
+                                </View>
+                              )}
+                            </View>
+                            <ThemedText type="small" numberOfLines={2} style={styles.pastName}>
+                              {g.name}
+                            </ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary" style={styles.pastMeta}>
+                              {g.qty}
+                              {g.unit ? ` ${g.unit}` : ''} · {since(g.at)}
+                            </ThemedText>
+                          </View>
+                        ))}
+                      </View>
+                    </ScrollView>
                   </View>
                 )}
 
@@ -580,6 +676,21 @@ const styles = StyleSheet.create({
     marginTop: Spacing.three,
   },
   searchInput: { flex: 1, paddingVertical: Spacing.three, fontSize: 15 },
+  pastCard: { width: 108, borderRadius: Spacing.three, padding: Spacing.two },
+  pastTop: { alignItems: 'center' },
+  pastImg: { width: '100%', height: 56, borderRadius: Spacing.two, backgroundColor: '#d8d8d8' },
+  pastImgEmpty: { alignItems: 'center', justifyContent: 'center' },
+  pastTimes: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    paddingHorizontal: 5,
+    borderRadius: Spacing.five,
+    backgroundColor: GREEN,
+  },
+  pastTimesText: { color: '#fff', fontWeight: '700', fontSize: 11 },
+  pastName: { fontWeight: '600', marginTop: Spacing.one, lineHeight: 15 },
+  pastMeta: { fontSize: 11 },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

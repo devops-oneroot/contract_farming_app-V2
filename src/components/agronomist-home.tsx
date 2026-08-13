@@ -48,6 +48,7 @@ export function AgronomistHome() {
   const [openCount, setOpenCount] = useState(0);
   const [stats, setStats] = useState<DayStats | null>(null);
   const [session, setSession] = useState<TrackingSession | null>(null);
+  const [fpoCount, setFpoCount] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -59,6 +60,10 @@ export function AgronomistHome() {
         .catch(() => setOpenCount(0));
       api.getDayStats(user._id).then(setStats).catch(() => setStats(null));
       api.currentTracking(user._id).then(setSession).catch(() => setSession(null));
+      api
+        .listFpos({ agronomistId: user._id })
+        .then((fs) => setFpoCount(fs.length))
+        .catch(() => setFpoCount(0));
     }, [user, senior])
   );
 
@@ -103,6 +108,15 @@ export function AgronomistHome() {
       well: Brand.dangerSurface,
       route: '/disease-reports',
       badge: openCount,
+    },
+    {
+      key: 'given',
+      label: 'Products Given',
+      sub: 'Who got what',
+      icon: 'cube',
+      tint: Brand.secondary,
+      well: Brand.secondarySurface,
+      route: '/products-given',
     },
     {
       key: 'day',
@@ -286,6 +300,40 @@ export function AgronomistHome() {
               </Pressable>
             );
           })}
+
+          {/* Sits at the bottom on purpose: onboarding an FPO is occasional
+              work, unlike the daily visit-and-report loop above it. */}
+          <ThemedText type="smallBold" style={styles.sectionTitle}>
+            FPO onboarding
+          </ThemedText>
+          {/* The list, not the form: seeing what is already there before
+              adding is what stops the same FPO being registered twice. The
+              list carries its own + button. */}
+          <Pressable
+            onPress={() => router.push('/fpos' as never)}
+            style={({ pressed }) => [styles.fpoCard, pressed && { opacity: 0.85 }]}>
+            <View style={styles.fpoIcon}>
+              <Ionicons name="business" size={22} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold" style={{ fontSize: 15 }}>
+                My FPOs
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                {fpoCount > 0
+                  ? `${fpoCount} onboarded · tap to view or edit`
+                  : 'None yet — tap to onboard your first'}
+              </ThemedText>
+            </View>
+            {fpoCount > 0 && (
+              <View style={styles.fpoCount}>
+                <ThemedText type="smallBold" style={{ color: GREEN }}>
+                  {fpoCount}
+                </ThemedText>
+              </View>
+            )}
+            <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+          </Pressable>
         </ScrollView>
       </SafeAreaView>
 
@@ -411,5 +459,28 @@ const styles = StyleSheet.create({
     backgroundColor: Brand.primarySurface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  fpoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    backgroundColor: '#fff',
+    padding: Spacing.three,
+    borderRadius: Spacing.four,
+    ...CardShadow,
+  },
+  fpoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: Spacing.three,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fpoCount: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+    borderRadius: Spacing.five,
+    backgroundColor: Brand.primarySurface,
   },
 });

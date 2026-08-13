@@ -26,7 +26,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, FarmingType, Fbo, VISIT_SOURCES, VisitSource } from '@/lib/api';
+import { api, CatalogCrop, FarmingType, Fpo, VISIT_SOURCES, VisitSource } from '@/lib/api';
 import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
 import { CameraCapture } from '@/components/camera-capture';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -113,18 +113,17 @@ export default function OnboardFarmerScreen() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   /**
-   * The farmer's FBO. Searched first so the same organisation is not typed in
+   * The farmer's FPO. Searched first so the same organisation is not typed in
    * five different ways across five farmers; only offered as new once nothing
    * matches what has been typed.
    */
-  const [fbo, setFbo] = useState<Fbo | null>(null);
+  const [fbo, setFbo] = useState<Fpo | null>(null);
   const [fboQuery, setFboQuery] = useState('');
-  const [fboResults, setFboResults] = useState<Fbo[]>([]);
+  const [fboResults, setFboResults] = useState<Fpo[]>([]);
   const [fboSearching, setFboSearching] = useState(false);
-  const [fboAdding, setFboAdding] = useState(false);
 
   /**
-   * Bringing the FBO field above the keyboard.
+   * Bringing the FPO field above the keyboard.
    *
    * Android has run edge-to-edge since SDK 54, so the keyboard is drawn OVER
    * the window rather than shrinking it, and `KeyboardAvoidingView` has no
@@ -254,7 +253,7 @@ export default function OnboardFarmerScreen() {
       const res = await api.onboardFarmer(user._id, {
         name: name.trim(),
         mobile: mobile.trim(),
-        fboId: fbo?._id ?? null,
+        fpoId: fbo?._id ?? null,
         referredBy,
         crops: crops.map((c) => ({
           name: c.name,
@@ -318,7 +317,7 @@ export default function OnboardFarmerScreen() {
   };
 
   /**
-   * Look up FBOs as the agronomist types, debounced so a name is one request
+   * Look up FPOs as the agronomist types, debounced so a name is one request
    * rather than one per keystroke. Skipped entirely once one is chosen — the
    * question has been answered.
    */
@@ -332,7 +331,9 @@ export default function OnboardFarmerScreen() {
     setFboSearching(true);
     const t = setTimeout(() => {
       api
-        .listFbos(q)
+        // The FPOs agronomists have actually onboarded, not the old lookup
+        // tags — those were never filled in, so the box always came back empty.
+        .listFpos({ search: q })
         .then((rs) => live && setFboResults(rs))
         .catch(() => live && setFboResults([]))
         .finally(() => live && setFboSearching(false));
@@ -343,23 +344,6 @@ export default function OnboardFarmerScreen() {
     };
   }, [fboQuery, fbo]);
 
-  /** Add the typed name as a new FBO and select it. */
-  const addFbo = async () => {
-    const nextName = fboQuery.trim();
-    if (!nextName || fboAdding) return;
-    setFboAdding(true);
-    try {
-      // The server hands back the existing record if someone got there first.
-      const created = await api.createFbo(nextName, user?._id);
-      setFbo(created);
-      setFboQuery('');
-      setFboResults([]);
-    } catch (e: any) {
-      Alert.alert('Could not add FBO', e?.message || 'Please try again.');
-    } finally {
-      setFboAdding(false);
-    }
-  };
 
   /**
    * Shrink before keeping: a full-resolution phone photo is several megabytes,
@@ -520,7 +504,7 @@ export default function OnboardFarmerScreen() {
               })}
             </View>
 
-            {/* FBO — search first, add only if nothing matches. */}
+            {/* FPO — search first, add only if nothing matches. */}
             <ThemedText
               type="small"
               themeColor="textSecondary"
@@ -530,7 +514,7 @@ export default function OnboardFarmerScreen() {
               onLayout={(e) => {
                 fboY.current = e.nativeEvent.layout.y;
               }}>
-              FBO
+              FPO
             </ThemedText>
             {fbo ? (
               <View style={styles.fboPicked}>
@@ -541,11 +525,11 @@ export default function OnboardFarmerScreen() {
                   <ThemedText type="smallBold" numberOfLines={1}>
                     {fbo.name}
                   </ThemedText>
-                  {fbo.village || fbo.district ? (
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {[fbo.village, fbo.district].filter(Boolean).join(' · ')}
-                    </ThemedText>
-                  ) : null}
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                    {[fbo.mobile, fbo.address?.taluk, fbo.address?.district]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </ThemedText>
                 </View>
                 <Pressable onPress={() => setFbo(null)} hitSlop={10}>
                   <Ionicons name="close-circle" size={20} color={theme.textSecondary} />
@@ -558,7 +542,7 @@ export default function OnboardFarmerScreen() {
                   <TextInput
                     value={fboQuery}
                     onChangeText={setFboQuery}
-                    placeholder="Search FBO name"
+                    placeholder="Search FPO name"
                     placeholderTextColor={theme.textSecondary}
                     autoCorrect={false}
                     onFocus={() => setFboFocused(true)}
@@ -581,40 +565,29 @@ export default function OnboardFarmerScreen() {
                       <ThemedText type="small" style={{ fontWeight: '600' }} numberOfLines={1}>
                         {r.name}
                       </ThemedText>
-                      {r.village || r.district ? (
-                        <ThemedText
-                          type="small"
-                          themeColor="textSecondary"
-                          style={{ fontSize: 11 }}
-                          numberOfLines={1}>
-                          {[r.village, r.district].filter(Boolean).join(' · ')}
-                        </ThemedText>
-                      ) : null}
+                      <ThemedText
+                        type="small"
+                        themeColor="textSecondary"
+                        style={{ fontSize: 11 }}
+                        numberOfLines={1}>
+                        {[r.mobile, r.address?.taluk, r.address?.district]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </ThemedText>
                     </View>
                   </Pressable>
                 ))}
 
-                {/* Offered only once the search has come back with nothing that
-                    matches exactly — adding first and looking later is how one
-                    organisation ends up in the list three times. */}
-                {fboQuery.trim().length >= 2 &&
-                !fboSearching &&
-                !fboResults.some(
-                  (r) => r.name.trim().toLowerCase() === fboQuery.trim().toLowerCase()
-                ) ? (
-                  <Pressable
-                    onPress={addFbo}
-                    disabled={fboAdding}
-                    style={({ pressed }) => [styles.fboAdd, pressed && { opacity: 0.85 }]}>
-                    {fboAdding ? (
-                      <ActivityIndicator size="small" color={GREEN} />
-                    ) : (
-                      <Ionicons name="add-circle-outline" size={18} color={GREEN} />
-                    )}
-                    <ThemedText type="small" style={{ color: GREEN, fontWeight: '700', flex: 1 }}>
-                      Add &ldquo;{fboQuery.trim()}&rdquo; as a new FBO
+                {/* No quick-add any more: an FPO is a real record now, with
+                    a number, a role and a location. Creating one from a bare
+                    name here would produce a half-record nobody could ring. */}
+                {fboQuery.trim().length >= 2 && !fboSearching && fboResults.length === 0 ? (
+                  <View style={styles.fboAdd}>
+                    <Ionicons name="information-circle-outline" size={18} color={theme.textSecondary} />
+                    <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
+                      No FPO found. Onboard them from Home → My FPOs first, then come back.
                     </ThemedText>
-                  </Pressable>
+                  </View>
                 ) : null}
               </>
             )}

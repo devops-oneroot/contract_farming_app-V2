@@ -88,7 +88,79 @@ export type TrashedFarmer = {
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
 
-/** A Farmer Business Organisation a farmer can belong to. */
+/** One result from a place search: a real, geocoded location to pick from. */
+export type PlaceHit = {
+  /** The full name, so the right one is recognisable by its surroundings. */
+  label: string;
+  latitude: number;
+  longitude: number;
+  village: string;
+  taluk: string;
+  district: string;
+  state: string;
+};
+
+/**
+ * Someone else at the FPO. Only the name is required — an agronomist meeting
+ * four people will not always come away with four phone numbers.
+ */
+export type FpoMember = {
+  name: string;
+  mobile: string;
+  designation: string;
+};
+
+/**
+ * An FPO an agronomist has onboarded: a named representative, their role, and
+ * the scale of what they handle.
+ *
+ * Distinct from `Fbo` below, which despite its older name is also an FPO — but
+ * only as a lookup tag a farmer is filed under. Both read "FPO" on screen; the
+ * `Fbo` identifier survives because `/api/fbos` and its collection are already
+ * live and renaming them needs a migration.
+ */
+export type Fpo = {
+  _id: string;
+  name: string;
+  mobile: string;
+  role: string;
+  photoUrl: string;
+  /** Other people at the same FPO. Empty when only one contact was taken. */
+  members: FpoMember[];
+  crops: string[];
+  /** As stated by them on the day — a claim, not a count we can verify. */
+  farmerCount: number;
+  location: { latitude: number | null; longitude: number | null };
+  /** Whether the pin is where the agent stood, or a place they searched for. */
+  locationSource?: 'gps' | 'search' | '';
+  /** Reverse-geocoded from `location`, never typed. Blank if it could not be read. */
+  address: FarmAddress;
+  agronomist: string | null;
+  createdAt: string;
+};
+
+/**
+ * One page of FPOs. `total` and `totals` describe everything the filter
+ * matches, not just `items`, so a count does not have to be recomputed — or
+ * worse, grow — as more pages arrive.
+ */
+export type FpoPage = {
+  items: Fpo[];
+  total: number;
+  totals: { farmers: number };
+  page: number;
+  limit: number;
+  hasMore: boolean;
+};
+
+/**
+ * The FPO a farmer belongs to — shown as "FPO" everywhere in the app.
+ *
+ * The type, the endpoint and the collection are still named `fbo` from when
+ * this was called a Farmer Business Organisation. Renaming them would mean a
+ * data migration and would collide with `/api/fpos`, which the onboarding
+ * feature above already owns.
+ */
 export type Fbo = {
   _id: string;
   name: string;
@@ -198,6 +270,20 @@ export type ProductSale = {
   /** When the follow-up after-photos become collectable. */
   afterDueAt: string | null;
   createdAt: string;
+};
+
+/**
+ * One page of sales. `total` and `totals` describe everything the filter
+ * matches, not just `items`, so a summary does not have to be recomputed —
+ * or worse, grow — as more pages arrive.
+ */
+export type ProductSalePage = {
+  items: ProductSale[];
+  total: number;
+  totals: { value: number; products: number };
+  page: number;
+  limit: number;
+  hasMore: boolean;
 };
 
 /** A senior agronomist's answer to a disease report. */
@@ -350,6 +436,12 @@ export type User = {
   onboardedBy?: string | null;
   farmAddress?: FarmAddress;
   farmAddressManual?: boolean;
+  /**
+   * Photo of the farmer. Set at onboarding or added later from the edit screen;
+   * empty when none has been taken. `getUser` returns the whole document, so
+   * this always arrives even though the leaner list endpoints select for it.
+   */
+  photoUrl?: string;
 };
 
 export type CropProgress = {
@@ -607,8 +699,13 @@ export const api = {
       mobile: string;
       /** How this farmer reached us. Optional, and only set on a new record. */
       referredBy?: VisitSource | null;
-      /** The Farmer Business Organisation this farmer belongs to, if any. */
+      /** Legacy lookup-tag link. Kept for older callers; nothing sets it now. */
       fboId?: string | null;
+      /**
+       * The FPO this farmer belongs to, chosen from the ones agronomists have
+       * actually onboarded. This is what the onboarding screen sets.
+       */
+      fpoId?: string | null;
       /** One entry per crop — a farmer usually grows several, each on its own area. */
       crops?: {
         name: string;
@@ -896,6 +993,41 @@ export const api = {
     return request<ProductSale[]>(`/api/product-sales?${q.toString()}`);
   },
 
+  /**
+   * The same list, a page at a time, with the search done on the server.
+   *
+   * Kept separate from `listProductSales` rather than folded into it: sending
+   * `page`/`limit` changes the response from an array to an envelope, and the
+   * screens that want everything at once should not have to unwrap it.
+   *
+   * `totals` covers the whole filtered set, not the page, so a summary bar can
+   * show real figures without holding every row.
+   */
+  listProductSalesPage: (params: {
+    farmerId?: string;
+    agronomistId?: string;
+    /** Farmer name or mobile only — product and crop have their own filters. */
+    search?: string;
+    /** Product id from the catalogue. */
+    productId?: string;
+    /** Crop NAME, not id: a Crop belongs to one farmer, the name spans them all. */
+    crop?: string;
+    pendingAfter?: boolean;
+    page?: number;
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.farmerId) q.set('farmer', params.farmerId);
+    if (params.agronomistId) q.set('agronomist', params.agronomistId);
+    if (params.search?.trim()) q.set('search', params.search.trim());
+    if (params.productId) q.set('product', params.productId);
+    if (params.crop) q.set('crop', params.crop);
+    if (params.pendingAfter) q.set('pendingAfter', '1');
+    q.set('page', String(params.page ?? 1));
+    q.set('limit', String(params.limit ?? 20));
+    return request<ProductSalePage>(`/api/product-sales?${q.toString()}`);
+  },
+
   // Sell products to a farmer on the field, with before/after photos of the crop.
   // Names and line totals are resolved server-side from the catalog.
   createProductSale: async (body: {
@@ -1037,11 +1169,11 @@ export const api = {
     }
   ) => request<Crop>(`/api/crops/${cropId}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
-  /** FBOs matching what has been typed. Capped server-side at 20. */
+  /** FPOs matching what has been typed. Capped server-side at 20. */
   listFbos: (search?: string) => request<Fbo[]>(`/api/fbos${qs({ search })}`),
 
   /**
-   * Add an FBO. If one with that name already exists the server returns it
+   * Add an FPO. If one with that name already exists the server returns it
    * rather than erroring, so two agents in the same village cannot end up with
    * two records for one organisation.
    */
@@ -1050,6 +1182,178 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name, createdBy }),
     }),
+
+  /**
+   * What area a set of coordinates falls in, so the agent can see where the
+   * phone thinks they are before they commit the record.
+   *
+   * `address` is null when the geocoder is unreachable — that is a normal
+   * outcome in the field, not an error, and onboarding proceeds on coordinates.
+   */
+  resolveArea: (latitude: number, longitude: number) =>
+    request<{ address: FarmAddress | null }>(`/api/fpos/area?lat=${latitude}&lng=${longitude}`),
+
+  /**
+   * Find a place by name, for when the agronomist is not standing where the
+   * FPO is. They type to search, but what gets stored is the picked result's
+   * coordinates — so the area name stays geocoded and still groups correctly.
+   *
+   * Empty list on any failure; the caller shows "nothing found" either way.
+   */
+  searchPlaces: (query: string) =>
+    request<{ places: PlaceHit[] }>(`/api/fpos/area/search?q=${encodeURIComponent(query)}`),
+
+  /**
+   * The same list, a page at a time, with the filtering done on the server.
+   *
+   * Kept separate from `listFpos` rather than folded into it: sending
+   * `page`/`limit` changes the response from an array to an envelope, and the
+   * callers that want everything at once should not have to unwrap it.
+   */
+  listFposPage: (params: {
+    agronomistId?: string;
+    search?: string;
+    role?: string;
+    crop?: string;
+    /**
+     * Local-midnight instants, the same shape the People tab sends. A bare
+     * `YYYY-MM-DD` would be read as UTC midnight — 05:30 in IST, so "today"
+     * would drop every record made before dawn.
+     */
+    range?: DateRange;
+    page?: number;
+    limit?: number;
+  }) =>
+    request<FpoPage>(
+      `/api/fpos${qs({
+        agronomist: params.agronomistId,
+        search: params.search,
+        role: params.role,
+        crop: params.crop,
+        ...rangeParams(params.range),
+        page: String(params.page ?? 1),
+        limit: String(params.limit ?? 20),
+      })}`
+    ),
+
+  /**
+   * Is this number already on an FPO? Asked while the agent is still typing,
+   * so a duplicate surfaces before the rest of the form is filled in.
+   *
+   * `excludeId` skips one record, so the edit form does not report a number as
+   * taken by the very FPO being edited.
+   */
+  checkFpoMobile: (mobile: string, excludeId?: string) =>
+    request<{ fpo: Pick<Fpo, '_id' | 'name' | 'role' | 'photoUrl' | 'address' | 'agronomist'> | null }>(
+      `/api/fpos/check-mobile${qs({ mobile, exclude: excludeId })}`
+    ),
+
+  getFpo: (id: string) => request<Fpo>(`/api/fpos/${id}`),
+
+  /**
+   * Correct an FPO already on record. Only the fields passed are touched, so
+   * fixing a misheard number cannot blank out the crops.
+   *
+   * Omitting `photo` leaves the existing one alone — it never clears it.
+   */
+  updateFpo: async (
+    id: string,
+    body: {
+      name?: string;
+      mobile?: string;
+      role?: string;
+      crops?: string[];
+      members?: FpoMember[];
+      farmerCount?: number;
+      latitude?: number | null;
+      longitude?: number | null;
+      locationSource?: 'gps' | 'search' | null;
+      photo?: { uri: string; name: string; type: string } | null;
+    }
+  ): Promise<Fpo> => {
+    const form = new FormData();
+    if (body.name !== undefined) form.append('name', body.name);
+    if (body.mobile !== undefined) form.append('mobile', body.mobile);
+    if (body.role !== undefined) form.append('role', body.role);
+    if (body.crops !== undefined) form.append('crops', JSON.stringify(body.crops));
+    if (body.members !== undefined) form.append('members', JSON.stringify(body.members));
+    if (body.farmerCount !== undefined) form.append('farmerCount', String(body.farmerCount));
+    // Coordinates travel together: the server re-reads the area from them, and
+    // half a pair would leave the address describing the old place.
+    if (body.latitude != null && body.longitude != null) {
+      form.append('latitude', String(body.latitude));
+      form.append('longitude', String(body.longitude));
+      if (body.locationSource) form.append('locationSource', body.locationSource);
+    }
+    if (body.photo) form.append('photo', body.photo as any);
+
+    const res = await fetch(`${BASE_URL}/api/fpos/${id}`, { method: 'PATCH', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save this FPO');
+    return data as Fpo;
+  },
+
+  /** FPOs onboarded in the field. `agronomistId` narrows it to an agent's own. */
+  listFpos: (
+    params: {
+      agronomistId?: string;
+      /** Names and numbers only — role and crop are their own filters. */
+      search?: string;
+      role?: string;
+      crop?: string;
+    } = {}
+  ) =>
+    request<Fpo[]>(
+      `/api/fpos${qs({
+        agronomist: params.agronomistId,
+        search: params.search,
+        role: params.role,
+        crop: params.crop,
+      })}`
+    ),
+
+  /**
+   * Onboard an FPO representative. Multipart, so the photo goes up with the
+   * details in one request — two round trips in the field means the second one
+   * can fail and leave a record with no photo and no way to tell.
+   *
+   * Rejects a number that is already onboarded (409), which is what makes a
+   * retried save recoverable rather than silently doubling the record.
+   */
+  createFpo: async (body: {
+    agronomistId: string;
+    name: string;
+    mobile: string;
+    role: string;
+    crops: string[];
+    /** Optional. Rows without a name are dropped by the server. */
+    members?: FpoMember[];
+    farmerCount: number;
+    /** The area is derived from these on the server — it is never sent as text. */
+    latitude?: number | null;
+    longitude?: number | null;
+    /** Where the pin came from — the agent's phone, or a place they searched. */
+    locationSource?: 'gps' | 'search' | null;
+    photo?: { uri: string; name: string; type: string } | null;
+  }): Promise<Fpo> => {
+    const form = new FormData();
+    form.append('agronomistId', body.agronomistId);
+    form.append('name', body.name);
+    form.append('mobile', body.mobile);
+    form.append('role', body.role);
+    form.append('crops', JSON.stringify(body.crops));
+    if (body.members?.length) form.append('members', JSON.stringify(body.members));
+    form.append('farmerCount', String(body.farmerCount));
+    if (body.latitude != null) form.append('latitude', String(body.latitude));
+    if (body.longitude != null) form.append('longitude', String(body.longitude));
+    if (body.locationSource) form.append('locationSource', body.locationSource);
+    if (body.photo) form.append('photo', body.photo as any);
+
+    const res = await fetch(`${BASE_URL}/api/fpos`, { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save this FPO');
+    return data as Fpo;
+  },
 
   // Master crop catalog (admin-defined) shown in the Add-Crop picker.
   listCropCatalog: () => request<CatalogCrop[]>('/api/crop-catalog'),

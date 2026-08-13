@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Image } from 'expo-image';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -16,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -106,6 +109,13 @@ export default function EditFarmerScreen() {
   // Farmer details
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  /**
+   * A newly taken photo, held locally until Save. Null means "leave whatever
+   * they already have alone" — never "they have none", which is
+   * `farmer.photoUrl` being empty.
+   */
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [address, setAddress] = useState({ village: '', taluk: '', district: '', state: '' });
   const [location, setLocation] = useState<{ latitude: number | null; longitude: number | null }>({
     latitude: null,
@@ -150,6 +160,24 @@ export default function EditFarmerScreen() {
   const patchDraft = useCallback((i: number, patch: Partial<CropDraft>) => {
     setDrafts((ds) => ds.map((d, k) => (k === i ? { ...d, ...patch } : d)));
   }, []);
+
+  /**
+   * Shrink before keeping: a full-resolution phone photo is several megabytes,
+   * which is slow to send on a field connection and pointless for a portrait.
+   */
+  const capturePhoto = async (uri: string) => {
+    setCameraOpen(false);
+    try {
+      const out = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1080 } }], {
+        compress: 0.6,
+        format: ImageManipulator.SaveFormat.JPEG,
+      });
+      setPhoto(out.uri);
+    } catch {
+      // Never lose the shot because the resize failed.
+      setPhoto(uri);
+    }
+  };
 
   const useMyLocation = async () => {
     setLocating(true);
@@ -256,6 +284,31 @@ export default function EditFarmerScreen() {
           if (Object.keys(body).length) await api.updateCrop(d._id, body);
         }
 
+        /**
+         * Last, and on its own terms. It is the only multi-megabyte part of
+         * this save, so it is the part most likely to fail on a field
+         * connection — and failing it must not throw away the text edits that
+         * already went through. On failure we stay put with the photo still
+         * held, so Save retries the upload rather than starting over.
+         */
+        if (photo) {
+          try {
+            const res = await api.saveFarmerPhoto(farmerId, {
+              uri: photo,
+              name: 'farmer.jpg',
+              type: 'image/jpeg',
+            });
+            setFarmer((f) => (f ? { ...f, photoUrl: res.photoUrl } : f));
+            setPhoto(null);
+          } catch (e: any) {
+            Alert.alert(
+              'Details saved, photo was not',
+              e?.message || 'The photo could not be uploaded. Tap Save to try again.'
+            );
+            return;
+          }
+        }
+
         router.back();
       } catch (e: any) {
         Alert.alert('Could not save', e?.message || 'Please try again.');
@@ -318,7 +371,45 @@ export default function EditFarmerScreen() {
                 Farmer details
               </ThemedText>
 
-              <ThemedText type="small" themeColor="textSecondary">
+              {/* Farmers onboarded before the photo existed, or whose shot was
+                  skipped in the field, can be given one here. */}
+              <View style={styles.photoRow}>
+                {photo || farmer?.photoUrl ? (
+                  <Image
+                    source={{ uri: photo ?? farmer?.photoUrl }}
+                    style={styles.photo}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View style={[styles.photo, styles.photoEmpty]}>
+                    <Ionicons name="person-outline" size={30} color={theme.textSecondary} />
+                  </View>
+                )}
+                <View style={{ flex: 1, gap: Spacing.two }}>
+                  <Pressable
+                    onPress={() => setCameraOpen(true)}
+                    style={({ pressed }) => [styles.photoBtn, pressed && { opacity: 0.85 }]}>
+                    <Ionicons name="camera-outline" size={18} color={GREEN} />
+                    <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                      {photo || farmer?.photoUrl ? 'Change photo' : "Take farmer's photo"}
+                    </ThemedText>
+                  </Pressable>
+                  {/* Undoes the new shot only; it never deletes what is saved. */}
+                  {photo ? (
+                    <Pressable onPress={() => setPhoto(null)} hitSlop={6}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Undo — keep the old photo
+                      </ThemedText>
+                    </Pressable>
+                  ) : (
+                    <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                      Uploaded when you tap Save.
+                    </ThemedText>
+                  )}
+                </View>
+              </View>
+
+              <ThemedText type="small" themeColor="textSecondary" style={styles.label}>
                 Name
               </ThemedText>
               <TextInput
@@ -622,6 +713,10 @@ export default function EditFarmerScreen() {
           )}
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {cameraOpen && (
+        <CameraCapture onCapture={capturePhoto} onClose={() => setCameraOpen(false)} />
+      )}
     </ThemedView>
   );
 }
@@ -639,6 +734,24 @@ const styles = StyleSheet.create({
   section: { fontSize: 16, marginTop: Spacing.four, marginBottom: Spacing.two },
   label: { marginTop: Spacing.two },
   hint: { fontSize: 12 },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  photo: { width: 84, height: 84, borderRadius: Spacing.three, backgroundColor: '#d8d8d8' },
+  photoEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Brand.primarySurface,
+  },
+  photoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: GREEN,
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
   input: {
     borderRadius: Spacing.three,
     paddingHorizontal: Spacing.three,

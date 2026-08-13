@@ -1,0 +1,557 @@
+import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FilterPicker } from '@/components/filter-picker';
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { Brand, Spacing } from '@/constants/theme';
+import { useAuth } from '@/context/auth';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme } from '@/hooks/use-theme';
+import { api, CatalogCrop, Farmer, Product, ProductSale } from '@/lib/api';
+
+const GREEN = Brand.primary;
+const AMBER = Brand.accent;
+const GREEN_SURFACE = Brand.surface;
+
+/** Big enough to fill a tall screen, small enough to arrive on a field connection. */
+const PAGE_SIZE = 20;
+/** Long enough that typing a village name is one request, not eight. */
+const SEARCH_DEBOUNCE_MS = 350;
+
+const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+/** "how many days" is the question, so lead with the number and keep it short. */
+function ago(iso: string) {
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (d <= 0) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 30) return `${d} days ago`;
+  const months = Math.round(d / 30);
+  return months <= 1 ? '1 month ago' : `${months} months ago`;
+}
+
+/**
+ * Taluk and district, whichever of them the farmer actually has. Rural
+ * addresses are often part-filled, so this never renders a stray comma.
+ */
+const place = (f?: Farmer) =>
+  [f?.farmAddress?.taluk, f?.farmAddress?.district].filter(Boolean).join(', ');
+
+/**
+ * Everything this agronomist has handed over, across every farmer.
+ *
+ * The farmer's own page answers "what has this farmer had"; this answers the
+ * other direction — "what have I given, to whom, and how long ago".
+ *
+ * Paged, searched and totalled on the server. A field agent two seasons in has
+ * hundreds of handovers, and neither the phone nor the connection should have
+ * to carry all of them to show twenty.
+ */
+export default function ProductsGivenScreen() {
+  const theme = useTheme();
+  const scheme = useColorScheme();
+  const router = useRouter();
+  const { user } = useAuth();
+  const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
+
+  const [sales, setSales] = useState<ProductSale[]>([]);
+  // Address and photo live on the farmer, not the sale, so the roster is
+  // fetched once and joined by id — never one request per row.
+  const [farmers, setFarmers] = useState<Record<string, Farmer>>({});
+  const [totals, setTotals] = useState({ count: 0, products: 0, value: 0 });
+  const [dueCount, setDueCount] = useState(0);
+
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const page = useRef(1);
+
+  // Farmer name or number only. Product and crop are picked, not typed.
+  const [query, setQuery] = useState('');
+  const [term, setTerm] = useState('');
+  const [dueOnly, setDueOnly] = useState(false);
+  const [productId, setProductId] = useState<string | null>(null);
+  const [crop, setCrop] = useState<string | null>(null);
+  const [picking, setPicking] = useState<'product' | 'crop' | null>(null);
+
+  // The catalogues that back the two pickers.
+  const [products, setProducts] = useState<Product[]>([]);
+  const [crops, setCrops] = useState<CatalogCrop[]>([]);
+
+  // A slow first page for "ram" must not land on top of results for "ramesh".
+  const request = useRef(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => setTerm(query), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const loadFirst = useCallback(async () => {
+    if (!user) return;
+    const ticket = ++request.current;
+    setLoading(true);
+    try {
+      const [res, count] = await Promise.all([
+        api.listProductSalesPage({
+          agronomistId: user._id,
+          search: term,
+          productId: productId ?? undefined,
+          crop: crop ?? undefined,
+          pendingAfter: dueOnly,
+          page: 1,
+          limit: PAGE_SIZE,
+        }),
+        // One row is enough — only the count is wanted, for the chip's badge.
+        api
+          .listProductSalesPage({ agronomistId: user._id, pendingAfter: true, page: 1, limit: 1 })
+          .then((r) => r.total)
+          .catch(() => 0),
+      ]);
+      if (ticket !== request.current) return;
+      page.current = 1;
+      setSales(res.items);
+      setHasMore(res.hasMore);
+      setTotals({ count: res.total, products: res.totals.products, value: res.totals.value });
+      setDueCount(count);
+    } catch {
+      if (ticket === request.current) {
+        setSales([]);
+        setHasMore(false);
+      }
+    } finally {
+      if (ticket === request.current) setLoading(false);
+    }
+  }, [user, term, dueOnly, productId, crop]);
+
+  const loadMore = useCallback(async () => {
+    if (!user || loadingMore || !hasMore) return;
+    const ticket = request.current;
+    setLoadingMore(true);
+    try {
+      const res = await api.listProductSalesPage({
+        agronomistId: user._id,
+        search: term,
+        productId: productId ?? undefined,
+        crop: crop ?? undefined,
+        pendingAfter: dueOnly,
+        page: page.current + 1,
+        limit: PAGE_SIZE,
+      });
+      // The filter changed while this was in flight — the page belongs to a
+      // list that no longer exists.
+      if (ticket !== request.current) return;
+      page.current += 1;
+      setSales((prev) => [...prev, ...res.items]);
+      setHasMore(res.hasMore);
+    } catch {
+      if (ticket === request.current) setHasMore(false);
+    } finally {
+      if (ticket === request.current) setLoadingMore(false);
+    }
+  }, [user, term, dueOnly, productId, crop, loadingMore, hasMore]);
+
+  /**
+   * Fetched once and never paged: the roster only supplies photos and
+   * addresses, and the two catalogues only fill the pickers. Each failure
+   * costs a decoration or a filter, never the list itself.
+   */
+  useEffect(() => {
+    if (!user) return;
+    api
+      .listAgronomistFarmers(user._id)
+      .then((roster) => setFarmers(Object.fromEntries(roster.map((f) => [f._id, f]))))
+      .catch(() => {});
+    api.listProducts().then(setProducts).catch(() => {});
+    api.listCropCatalog().then(setCrops).catch(() => {});
+  }, [user]);
+
+  /**
+   * Covers both the first load and every later one: the effect re-runs
+   * whenever `loadFirst` changes identity, which is exactly when the search
+   * term or the filter changed. A separate mount effect alongside this would
+   * simply fire every query twice.
+   *
+   * On focus it also picks up an after-photo taken on the farmer's page since.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      loadFirst();
+    }, [loadFirst])
+  );
+
+  const renderSale = ({ item: s }: { item: ProductSale }) => {
+    const due = !!s.afterDueAt && new Date(s.afterDueAt).getTime() <= Date.now();
+    const farmer = farmers[s.farmer];
+    const where = place(farmer);
+    return (
+      <Pressable
+        // The follow-up photo is taken from the farmer's page, so send them
+        // where they can act on what they just read.
+        onPress={() =>
+          router.push({
+            pathname: '/farmer',
+            params: { farmerId: s.farmer, name: s.farmerName },
+          } as never)
+        }
+        style={({ pressed }) => pressed && { opacity: 0.7 }}>
+        <ThemedView type="backgroundElement" style={styles.card}>
+          <View style={styles.cardHead}>
+            {/* Onboarding photo when there is one; initial otherwise, so the
+                row never collapses to a different height. */}
+            {farmer?.photoUrl ? (
+              <Image source={{ uri: farmer.photoUrl }} style={styles.avatar} contentFit="cover" />
+            ) : (
+              <View style={[styles.avatar, styles.avatarEmpty]}>
+                <ThemedText type="smallBold" style={{ color: GREEN }}>
+                  {(s.farmerName || '?').trim().charAt(0).toUpperCase()}
+                </ThemedText>
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold">{s.farmerName || 'Farmer'}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {s.farmerMobile || 'no number'}
+                {s.cropName ? ` · ${s.cropName}` : ''}
+              </ThemedText>
+              {where ? (
+                <View style={styles.placeRow}>
+                  <Ionicons name="location-outline" size={12} color={theme.textSecondary} />
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.placeText}>
+                    {where}
+                  </ThemedText>
+                </View>
+              ) : null}
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <ThemedText type="smallBold" style={{ color: GREEN }}>
+                {money(s.total)}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {ago(s.soldAt)}
+              </ThemedText>
+            </View>
+          </View>
+
+          {s.items.map((it) => (
+            <View key={it.product} style={styles.line}>
+              {it.imageUrl ? (
+                <Image source={{ uri: it.imageUrl }} style={styles.thumb} contentFit="cover" />
+              ) : (
+                <View style={[styles.thumb, styles.thumbEmpty]}>
+                  <Ionicons name="cube-outline" size={12} color={theme.textSecondary} />
+                </View>
+              )}
+              <ThemedText type="small" style={{ flex: 1 }} numberOfLines={1}>
+                {it.name}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {it.qty}
+                {it.unit ? ` ${it.unit}` : ''} · {money(it.lineTotal)}
+              </ThemedText>
+              {/* Only worth a mark once the wait is actually over. */}
+              {due && !it.afterPhotoUrl ? (
+                <Ionicons name="camera-outline" size={14} color={AMBER} />
+              ) : it.afterPhotoUrl ? (
+                <Ionicons name="checkmark-circle" size={14} color={GREEN} />
+              ) : (
+                <Ionicons name="time-outline" size={14} color={theme.textSecondary} />
+              )}
+            </View>
+          ))}
+
+          {due && s.items.some((it) => !it.afterPhotoUrl) && (
+            <ThemedText type="small" style={styles.dueNote}>
+              After-photo due — tap to open {s.farmerName || 'the farmer'}
+            </ThemedText>
+          )}
+        </ThemedView>
+      </Pressable>
+    );
+  };
+
+  const searching = !!term || dueOnly || !!productId || !!crop;
+  // The button shows the chosen product, so it needs the name behind the id.
+  const productName = products.find((p) => p._id === productId)?.name ?? null;
+
+  return (
+    <View style={[styles.container, { backgroundColor: screenBg }]}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <View style={styles.topBar}>
+          <Pressable onPress={() => router.back()} hitSlop={10}>
+            <Ionicons name="chevron-back" size={26} color={theme.text} />
+          </Pressable>
+          <ThemedText type="smallBold">Products given</ThemedText>
+          <View style={{ width: 26 }} />
+        </View>
+
+        {/* Kept out of the list: an agent filtering a long history should not
+            have to scroll back up to change what they searched for. */}
+        <View style={styles.tools}>
+          <View style={[styles.search, { backgroundColor: theme.backgroundElement }]}>
+            <Ionicons name="search" size={18} color={theme.textSecondary} />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Farmer name or number"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.searchInput, { color: theme.text }]}
+            />
+            {query ? (
+              <Pressable onPress={() => setQuery('')} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          {/* Product and crop, each its own filter, each showing what is
+              currently chosen rather than a bare label. */}
+          <View style={styles.chipWrap}>
+            <Pressable
+              onPress={() => setPicking('product')}
+              style={[
+                styles.filterBtn,
+                {
+                  backgroundColor: productId ? GREEN : theme.backgroundElement,
+                  flex: 1,
+                },
+              ]}>
+              <Ionicons
+                name="cube-outline"
+                size={14}
+                color={productId ? '#fff' : theme.textSecondary}
+              />
+              <ThemedText
+                type="small"
+                numberOfLines={1}
+                style={{ color: productId ? '#fff' : theme.text, fontWeight: '700', flex: 1 }}>
+                {productName ?? 'All products'}
+              </ThemedText>
+              <Ionicons
+                name="chevron-down"
+                size={14}
+                color={productId ? '#fff' : theme.textSecondary}
+              />
+            </Pressable>
+
+            <Pressable
+              onPress={() => setPicking('crop')}
+              style={[
+                styles.filterBtn,
+                { backgroundColor: crop ? GREEN : theme.backgroundElement, flex: 1 },
+              ]}>
+              <Ionicons name="leaf-outline" size={14} color={crop ? '#fff' : theme.textSecondary} />
+              <ThemedText
+                type="small"
+                numberOfLines={1}
+                style={{ color: crop ? '#fff' : theme.text, fontWeight: '700', flex: 1 }}>
+                {crop ?? 'All crops'}
+              </ThemedText>
+              <Ionicons name="chevron-down" size={14} color={crop ? '#fff' : theme.textSecondary} />
+            </Pressable>
+          </View>
+
+          {/* Only worth offering when something is actually outstanding. */}
+          {dueCount > 0 && (
+            <View style={styles.chipWrap}>
+              {[
+                { on: false, label: 'All' },
+                { on: true, label: `Photo due (${dueCount})` },
+              ].map((c) => {
+                const active = dueOnly === c.on;
+                return (
+                  <Pressable
+                    key={String(c.on)}
+                    onPress={() => setDueOnly(c.on)}
+                    style={[
+                      styles.chip,
+                      { backgroundColor: active ? GREEN : theme.backgroundElement },
+                    ]}>
+                    <ThemedText
+                      type="small"
+                      style={{ color: active ? '#fff' : theme.text, fontWeight: '700' }}>
+                      {c.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        {loading ? (
+          <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
+        ) : (
+          <FlatList
+            data={sales}
+            keyExtractor={(s) => s._id}
+            renderItem={renderSale}
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={false} onRefresh={loadFirst} />}
+            onEndReachedThreshold={0.4}
+            onEndReached={loadMore}
+            ListHeaderComponent={
+              sales.length > 0 ? (
+                <ThemedView type="backgroundElement" style={styles.summary}>
+                  <View style={styles.summaryCell}>
+                    <ThemedText type="smallBold" style={{ color: GREEN }}>
+                      {totals.count}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.summaryLabel}>
+                      handovers
+                    </ThemedText>
+                  </View>
+                  <View style={styles.summaryCell}>
+                    <ThemedText type="smallBold" style={{ color: GREEN }}>
+                      {totals.products}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.summaryLabel}>
+                      products
+                    </ThemedText>
+                  </View>
+                  <View style={styles.summaryCell}>
+                    <ThemedText type="smallBold" style={{ color: GREEN }}>
+                      {money(totals.value)}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.summaryLabel}>
+                      value
+                    </ThemedText>
+                  </View>
+                </ThemedView>
+              ) : null
+            }
+            ListEmptyComponent={
+              <ThemedView type="backgroundElement" style={styles.empty}>
+                <Ionicons
+                  name={searching ? 'search-outline' : 'cube-outline'}
+                  size={36}
+                  color={theme.textSecondary}
+                />
+                <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+                  {term
+                    ? `No farmer matches “${term}”.`
+                    : productName
+                      ? `You have not given ${productName}${crop ? ` for ${crop}` : ''} yet.`
+                      : crop
+                        ? `You have not given anything for ${crop} yet.`
+                        : dueOnly
+                          ? 'No handovers are waiting for a follow-up photo.'
+                          : 'You have not given any products yet. Open a farmer and tap “Give product”.'}
+                </ThemedText>
+              </ThemedView>
+            }
+            ListFooterComponent={
+              loadingMore ? (
+                <ActivityIndicator style={{ marginVertical: Spacing.four }} color={GREEN} />
+              ) : !hasMore && sales.length >= PAGE_SIZE ? (
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={{ textAlign: 'center', marginVertical: Spacing.four }}>
+                  That is everything.
+                </ThemedText>
+              ) : null
+            }
+          />
+        )}
+      </SafeAreaView>
+
+      <FilterPicker
+        visible={picking === 'product'}
+        title="Products"
+        allLabel="All products"
+        options={products.map((p) => ({ value: p._id, label: p.name, imageUrl: p.imageUrl }))}
+        selected={productId}
+        onSelect={setProductId}
+        onClose={() => setPicking(null)}
+      />
+      {/* Crops key on name, not id: a Crop row belongs to a single farmer, so
+          "all the Tomato sales" spans hundreds of different ids. */}
+      <FilterPicker
+        visible={picking === 'crop'}
+        title="Crops"
+        allLabel="All crops"
+        options={crops.map((c) => ({ value: c.name, label: c.name, imageUrl: c.imageUrl }))}
+        selected={crop}
+        onSelect={setCrop}
+        onClose={() => setPicking(null)}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+  },
+  body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
+  tools: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.two, gap: Spacing.two },
+  search: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+  },
+  searchInput: { flex: 1, paddingVertical: Spacing.two, fontSize: 15 },
+  chipWrap: { flexDirection: 'row', gap: Spacing.two },
+  filterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderRadius: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  chip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.five,
+  },
+  empty: { padding: Spacing.five, borderRadius: Spacing.four, alignItems: 'center', gap: Spacing.two },
+  summary: {
+    flexDirection: 'row',
+    borderRadius: Spacing.four,
+    padding: Spacing.three,
+    marginBottom: Spacing.three,
+  },
+  summaryCell: { flex: 1, alignItems: 'center', gap: 2 },
+  summaryLabel: { fontSize: 11 },
+  card: { padding: Spacing.three, borderRadius: Spacing.four, marginBottom: Spacing.three },
+  cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#d8d8d8' },
+  avatarEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Brand.primarySurface,
+  },
+  placeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  placeText: { fontSize: 11 },
+  line: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  thumb: { width: 24, height: 24, borderRadius: Spacing.half, backgroundColor: '#d8d8d8' },
+  thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
+  dueNote: { color: AMBER, fontWeight: '700', marginTop: Spacing.two, fontSize: 11 },
+});
