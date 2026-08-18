@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CameraCapture } from '@/components/camera-capture';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -394,10 +395,12 @@ export default function TrackingScreen() {
                 <ThemedText type="small" themeColor="textSecondary">
                   Start photo
                 </ThemedText>
-                <RNImage
-                  source={{ uri: session.startPhotoUrl }}
+                {/* Uploaded, so expo-image can render it — unlike the local
+                    file:// previews further down, which need core Image. */}
+                <TappablePhoto
+                  uri={session.startPhotoUrl}
                   style={styles.startPhoto}
-                  resizeMode="cover"
+                  caption="start photo"
                 />
               </View>
             ) : null}

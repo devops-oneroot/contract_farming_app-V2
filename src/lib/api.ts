@@ -29,8 +29,12 @@ export type Farmer = {
   /**
    * The agronomist who registered this farmer in the field. Null when an admin
    * added them from the dashboard — i.e. the farmer was assigned, not onboarded.
+   *
+   * An id from the agronomist-scoped endpoint, but the whole-roster one
+   * populates it. Read it through `onboarderId` / `onboarderName` rather than
+   * comparing it directly, or the comparison silently fails on one of them.
    */
-  onboardedBy?: string | null;
+  onboardedBy?: string | AgronomistRef | null;
   /**
    * The day the admin dashboard wants this farmer visited, set when they were
    * added or handed over there. Null when no date was given — the visit is
@@ -87,6 +91,14 @@ export type TrashedFarmer = {
 };
 
 export type AgronomistRef = { _id: string; name: string; mobile: string };
+
+/** The id of whoever registered a farmer, whichever shape the endpoint sent. */
+export const onboarderId = (f: { onboardedBy?: string | AgronomistRef | null }) =>
+  typeof f.onboardedBy === 'string' ? f.onboardedBy : (f.onboardedBy?._id ?? null);
+
+/** Their name, when the endpoint populated it. Empty otherwise. */
+export const onboarderName = (f: { onboardedBy?: string | AgronomistRef | null }) =>
+  typeof f.onboardedBy === 'string' ? '' : (f.onboardedBy?.name ?? '');
 
 /** One result from a place search: a real, geocoded location to pick from. */
 export type PlaceHit = {
@@ -173,6 +185,93 @@ export type Fbo = {
  * so the caller's local day boundaries are the ones the server applies.
  */
 export type DateRange = { from: Date; to: Date };
+
+/**
+ * How an agent's day is going right now.
+ *
+ * `no_field` is a day accounted for, not a missing one — the agent said why
+ * they stayed in — so it is deliberately not folded into `not_started`.
+ */
+export type TeamStatus = 'working' | 'paused' | 'ended' | 'no_field' | 'not_started';
+
+/** One agronomist's day, as a senior sees it on the team screen. */
+export type TeamMember = {
+  _id: string;
+  name: string;
+  mobile: string;
+  role: Role;
+  photoUrl: string;
+  onboarded: number;
+  visits: number;
+  lastVisitAt: string | null;
+  sales: number;
+  salesValue: number;
+  distanceKm: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  status: TeamStatus;
+  /** Why they stayed in. Only set when `status` is 'no_field'. */
+  noFieldReason: string;
+  /** Their last GPS fix of the day. Null when they never tracked. */
+  lastSeen: { latitude: number; longitude: number; at: string } | null;
+  reportFiled: boolean;
+  reportAt: string | null;
+  /**
+   * The places they worked in today, named — normally taken from the addresses
+   * of the farms they visited, onboarded or sold to.
+   */
+  areas: string[];
+  /**
+   * True when `areas` came from their last GPS fix instead, because none of the
+   * farms they dealt with had an address on file. Worth saying on screen: it is
+   * where the phone was, not a farm recorded as being there.
+   */
+  areasFromGps?: boolean;
+};
+
+export type TeamDay = {
+  date: string;
+  team: TeamMember[];
+  totals: {
+    people: number;
+    /** Out in the field right now — the number a senior looks for first. */
+    active: number;
+    onboarded: number;
+    visits: number;
+    sales: number;
+    salesValue: number;
+    distanceKm: number;
+    reportsFiled: number;
+    /** Every place the team worked in today, each named once. */
+    areas: string[];
+  };
+};
+
+/**
+ * Force a paged response into the envelope shape, whatever came back.
+ *
+ * A backend that predates paging ignores `page`/`limit` and returns a bare
+ * array. Reading `.items` off that gives `undefined`, which does NOT throw at
+ * the call site — it throws later, mid-render, when something does
+ * `list.length`. A red screen in a field, caused by a deploy going out in the
+ * wrong order.
+ *
+ * Normalising here means the worst case is one unpaged page of results, which
+ * is exactly what that older server was going to send anyway.
+ */
+function asPage<T>(res: unknown, extra: Record<string, unknown> = {}) {
+  if (Array.isArray(res)) {
+    return { items: res as T[], total: res.length, page: 1, limit: res.length, hasMore: false, ...extra };
+  }
+  const e = (res ?? {}) as Record<string, unknown>;
+  return {
+    ...extra,
+    ...e,
+    items: Array.isArray(e.items) ? (e.items as T[]) : [],
+    total: typeof e.total === 'number' ? e.total : 0,
+    hasMore: e.hasMore === true,
+  };
+}
 
 const rangeParams = (r?: DateRange) =>
   r ? { from: r.from.toISOString(), to: r.to.toISOString() } : {};
@@ -286,6 +385,81 @@ export type ProductSalePage = {
   hasMore: boolean;
 };
 
+/** One farmer as they appear on a day's report. */
+export type DayReportRow = {
+  id: string;
+  name: string;
+  mobile: string;
+  /** The farmer's whole recorded holding, not the area worked that day. */
+  acres: number;
+  crops: number;
+  cropNames: string[];
+  at: string | null;
+  place?: string;
+  notes?: string;
+  source?: string;
+  cropName?: string;
+  total?: number;
+  products?: string[];
+};
+
+/** What the agent wrote about the day, in their own words. */
+export type DayWritten = {
+  dailyReport: string;
+  dailyExpenses: string;
+  expectedExpensesTomorrow: string;
+  planOfActionTomorrow: string;
+  at: string;
+};
+
+/** A day's work in full: the counts, and the records behind them. */
+export type DayReport = {
+  agent: { name: string; mobile: string; role: string } | null;
+  date: string;
+  /** Null until the agent has submitted their report for that day. */
+  report: DayWritten | null;
+  stats: DayStats;
+  onboarded: DayReportRow[];
+  /**
+   * Farmers met today who were NOT registered today — deduplicated, so
+   * visiting someone and selling to them is one person met, not two.
+   */
+  metExisting: DayReportRow[];
+  visits: DayReportRow[];
+  sales: DayReportRow[];
+};
+
+/** What happened on one day, enough to mark it on a calendar. */
+export type AgendaDay = {
+  followUps: number;
+  onboarded: number;
+  visits: number;
+  sales: number;
+  salesTotal: number;
+};
+
+/** A farmer the agent promised to come back to. */
+export type FollowUp = {
+  id: string;
+  name: string;
+  mobile: string;
+  dueAt: string;
+  note: string;
+  place: string;
+  lastVisitedAt: string | null;
+};
+
+/**
+ * A month of the calendar. `days` is keyed by local YYYY-MM-DD, so a day means
+ * the day where the agent is standing rather than in UTC.
+ */
+export type Agenda = {
+  from: string;
+  to: string;
+  days: Record<string, AgendaDay>;
+  followUps: FollowUp[];
+};
+
 /** A senior agronomist's answer to a disease report. */
 export type DiseaseReply = {
   senior: string;
@@ -395,6 +569,16 @@ export type Visit = {
   farmerPhotoUrl: string;
   location: { latitude: number | null; longitude: number | null };
   notes: string;
+  /**
+   * Why the agent said they would come back, as written at THIS visit.
+   *
+   * The farmer record only holds the current reason — the next visit
+   * overwrites it — so this copy is what makes an old visit able to say why it
+   * was scheduled. Empty when no follow-up was set.
+   */
+  followUpNote?: string;
+  /** The date promised at this visit. Null when none was set. */
+  nextFollowUpAt?: string | null;
   /**
    * Set only on a random visit — one the agronomist decided on themselves —
    * and it says what prompted it. Null on a visit made against the day's list,
@@ -582,6 +766,73 @@ export const api = {
 
   listFarmers: () => request<Farmer[]>('/api/users/farmers'),
 
+  /**
+   * Every farmer in the system, not only the ones assigned to one agronomist.
+   *
+   * `onboardedBy` narrows it back to a single agent when asked. The list is
+   * searched and date-windowed on the server, so the device never holds the
+   * whole roster just to filter it.
+   */
+  /**
+   * Every agronomist, with how many farmers each registered.
+   *
+   * The counts come from the same tally the dashboard uses, so the picker and
+   * the list it filters can never disagree.
+   */
+  listAgronomistsWithCounts: () =>
+    request<{ _id: string; name: string; mobile: string; onboardedCount?: number }[]>(
+      '/api/users/agronomists'
+    ),
+
+  listAllFarmers: (params: { search?: string; range?: DateRange; onboardedBy?: string } = {}) =>
+    request<Farmer[]>(
+      `/api/users/farmers${qs({
+        search: params.search,
+        onboardedBy: params.onboardedBy,
+        ...rangeParams(params.range),
+      })}`
+    ),
+
+  /**
+   * The same list, a page at a time. Search, date window and scope are all
+   * applied on the server, so page 2 of a search is the next 10 matches rather
+   * than the next 10 rows filtered down to whatever happens to match.
+   */
+  listAllFarmersPage: (params: {
+    search?: string;
+    range?: DateRange;
+    onboardedBy?: string;
+    page?: number;
+    limit?: number;
+  }) =>
+    request<unknown>(
+      `/api/users/farmers${qs({
+        search: params.search,
+        onboardedBy: params.onboardedBy,
+        ...rangeParams(params.range),
+        page: String(params.page ?? 1),
+        limit: String(params.limit ?? 20),
+      })}`
+    ).then((r) => asPage<Farmer>(r)),
+
+  /** Aggregators, a page at a time, filtered on the server for the same reason. */
+  listAggregatorsPage: (params: {
+    agronomistId?: string;
+    search?: string;
+    range?: DateRange;
+    page?: number;
+    limit?: number;
+  }) =>
+    request<unknown>(
+      `/api/aggregators${qs({
+        agronomist: params.agronomistId,
+        search: params.search,
+        ...rangeParams(params.range),
+        page: String(params.page ?? 1),
+        limit: String(params.limit ?? 20),
+      })}`
+    ).then((r) => asPage<Aggregator>(r)),
+
   // A single user with their agronomist populated (used to show the farmer's agronomist).
   getUser: (id: string) => request<User>(`/api/users/${id}`),
 
@@ -723,7 +974,12 @@ export const api = {
 
   // ----- Field agent: aggregators / attendance / meetings -----
   // `search` filters by name/company/mobile on the server.
-  listAggregators: (agronomistId: string, search?: string, range?: DateRange) =>
+  /**
+   * Aggregators. Omitting `agronomistId` returns everyone's, which is what the
+   * People tab wants — an aggregator is a buyer the whole team deals with, not
+   * one agent's private contact.
+   */
+  listAggregators: (agronomistId?: string, search?: string, range?: DateRange) =>
     request<Aggregator[]>(
       `/api/aggregators${qs({ agronomist: agronomistId, search, ...rangeParams(range) })}`
     ),
@@ -932,6 +1188,49 @@ export const api = {
   },
 
   /** Today's measured numbers for one agent. `date` is yyyy-mm-dd. */
+  /**
+   * The same day with the records themselves — which farmers, their numbers
+   * and how much land — rather than only a tally of them.
+   */
+  /**
+   * A month of follow-ups owed and work already done, in one request.
+   * The detail behind any single day is `getDayReport`.
+   */
+  getAgenda: (userId: string, from: Date, to: Date) =>
+    request<Agenda>(
+      `/api/agenda?user=${encodeURIComponent(userId)}&from=${from.toISOString()}&to=${to.toISOString()}`
+    ),
+
+  /**
+   * Every agronomist's day at once — senior agronomists only.
+   *
+   * The server checks the requester's role against the database, so this is a
+   * closed endpoint rather than a hidden screen. A non-senior gets 403.
+   */
+  getTeamDay: (requesterId: string, date?: string) => {
+    const q = new URLSearchParams({ requester: requesterId });
+    if (date) q.set('date', date);
+    return request<TeamDay>(`/api/team-day?${q.toString()}`);
+  },
+
+  getDayReport: (userId: string, date?: string) => {
+    const q = new URLSearchParams({ user: userId });
+    if (date) q.set('date', date);
+    return request<DayReport>(`/api/day-report?${q.toString()}`);
+  },
+
+  /**
+   * Where the day's PDF lives. Opened in the phone's browser rather than built
+   * on the device: making a PDF in the app needs a native module, and adding
+   * one would mean a new build for every agent instead of an update they get
+   * without noticing.
+   */
+  dayReportPdfUrl: (userId: string, date?: string) => {
+    const q = new URLSearchParams({ user: userId });
+    if (date) q.set('date', date);
+    return `${BASE_URL}/api/day-report.pdf?${q.toString()}`;
+  },
+
   getDayStats: (userId: string, date?: string) => {
     const q = new URLSearchParams({ user: userId });
     if (date) q.set('date', date);
@@ -975,6 +1274,23 @@ export const api = {
   // Every visit made to one farmer, newest first — their visit history.
   listFarmerVisits: (farmerId: string) =>
     request<Visit[]>(`/api/visits?farmer=${encodeURIComponent(farmerId)}`),
+
+  /**
+   * Set, change or clear the return date on a visit already logged.
+   *
+   * `nextFollowUpAt: null` removes it. When this is the farmer's most recent
+   * visit the server also updates the farmer, so the date reaches Follow up and
+   * the calendar; on an older visit it only corrects that visit's own record.
+   */
+  setVisitFollowUp: (
+    visitId: string,
+    body: { nextFollowUpAt: string | null; followUpNote?: string }
+  ) =>
+    request<Visit>(`/api/visits/${encodeURIComponent(visitId)}/follow-up`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 
   // Products sold on the farm. Filter by farmer (their history) or agronomist
   // (own sales). `pendingAfter` returns only sales whose follow-up after-photos
@@ -1025,7 +1341,9 @@ export const api = {
     if (params.pendingAfter) q.set('pendingAfter', '1');
     q.set('page', String(params.page ?? 1));
     q.set('limit', String(params.limit ?? 20));
-    return request<ProductSalePage>(`/api/product-sales?${q.toString()}`);
+    return request<unknown>(`/api/product-sales?${q.toString()}`).then(
+      (r) => asPage<ProductSale>(r, { totals: { value: 0, products: 0 } }) as ProductSalePage
+    );
   },
 
   // Sell products to a farmer on the field, with before/after photos of the crop.

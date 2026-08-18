@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FilterPicker } from '@/components/filter-picker';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -212,7 +213,7 @@ export default function ProductsGivenScreen() {
             {/* Onboarding photo when there is one; initial otherwise, so the
                 row never collapses to a different height. */}
             {farmer?.photoUrl ? (
-              <Image source={{ uri: farmer.photoUrl }} style={styles.avatar} contentFit="cover" />
+              <TappablePhoto uri={farmer.photoUrl} style={styles.avatar} caption={s.farmerName} />
             ) : (
               <View style={[styles.avatar, styles.avatarEmpty]}>
                 <ThemedText type="smallBold" style={{ color: GREEN }}>
@@ -248,7 +249,7 @@ export default function ProductsGivenScreen() {
           {s.items.map((it) => (
             <View key={it.product} style={styles.line}>
               {it.imageUrl ? (
-                <Image source={{ uri: it.imageUrl }} style={styles.thumb} contentFit="cover" />
+                <TappablePhoto uri={it.imageUrl} style={styles.thumb} caption={it.name} />
               ) : (
                 <View style={[styles.thumb, styles.thumbEmpty]}>
                   <Ionicons name="cube-outline" size={12} color={theme.textSecondary} />

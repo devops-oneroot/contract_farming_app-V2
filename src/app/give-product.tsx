@@ -23,6 +23,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CameraCapture } from '@/components/camera-capture';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -43,7 +44,30 @@ type Step = 'pick' | 'confirm';
  */
 type Line = { qty: number; price: string; before: string | null };
 
-const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const money = (n: number) =>
+  `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** GST on farm inputs: 5% in total, split evenly between CGST and SGST. */
+const GST_RATE = 0.05;
+const HALF_GST = 0.025;
+
+/**
+ * The tax already inside a price.
+ *
+ * The price on a product is what the farmer pays — the figure agreed out loud
+ * on the farm — so the split works backwards out of it rather than adding to
+ * it. Charging 2.5% of the inclusive price instead would collect slightly too
+ * much and leave the total no longer matching what was quoted.
+ *
+ * SGST is taken as the remainder, not calculated again, so the three parts
+ * always add back to the total instead of drifting a paisa on rounding.
+ */
+function gstSplit(total: number) {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const taxable = round(total / (1 + GST_RATE));
+  const cgst = round(taxable * HALF_GST);
+  return { taxable, cgst, sgst: round(total - taxable - cgst) };
+}
 
 /** Rough, and deliberately so: "3 months ago" is what an agent needs, not a date. */
 function since(iso: string) {
@@ -206,6 +230,21 @@ export default function GiveProductScreen() {
   const inCart = products.filter((p) => cart[p._id]);
   const itemCount = inCart.reduce((s, p) => s + cart[p._id].qty, 0);
   const total = inCart.reduce((s, p) => s + cart[p._id].qty * (Number(cart[p._id].price) || 0), 0);
+
+  /**
+   * The price on a product is what the farmer pays, tax included — it is the
+   * figure agreed out loud on the farm, and it must not move because a tax
+   * line was added underneath it.
+   *
+   * So the split works backwards out of that: the taxable value is the price
+   * with GST taken off, and CGST and SGST are 2.5% of THAT each. Charging 2.5%
+   * of the inclusive price instead would collect slightly too much and leave
+   * the total no longer matching what was quoted.
+   *
+   *   taxable = total / 1.05      CGST = SGST = taxable x 2.5%
+   *   taxable + CGST + SGST = total, to the paisa
+   */
+  const tax = useMemo(() => gstSplit(total), [total]);
 
   const add = (p: Product) =>
     setCart((c) => ({ ...c, [p._id]: { qty: 1, price: String(p.price ?? 0), before: null } }));
@@ -386,7 +425,7 @@ export default function GiveProductScreen() {
                             style={[styles.pastCard, { backgroundColor: theme.backgroundElement }]}>
                             <View style={styles.pastTop}>
                               {g.imageUrl ? (
-                                <Image source={{ uri: g.imageUrl }} style={styles.pastImg} contentFit="cover" />
+                                <TappablePhoto uri={g.imageUrl} style={styles.pastImg} caption={g.name} />
                               ) : (
                                 <View style={[styles.pastImg, styles.pastImgEmpty]}>
                                   <Ionicons name="cube-outline" size={16} color={theme.textSecondary} />
@@ -574,8 +613,13 @@ export default function GiveProductScreen() {
                             keyboardType="decimal-pad"
                             style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
                           />
+                          {/* The taxable value, not the price typed beside it.
+                              Lines are ex-tax and the tax is added once at the
+                              bottom, the way a GST invoice reads — so this
+                              figure will not equal qty x price, and the
+                              summary below is where they meet again. */}
                           <ThemedText type="smallBold" style={{ marginLeft: 'auto' }}>
-                            {money(line.qty * (Number(line.price) || 0))}
+                            {money(gstSplit(line.qty * (Number(line.price) || 0)).taxable)}
                           </ThemedText>
                         </View>
                       </View>
@@ -586,12 +630,35 @@ export default function GiveProductScreen() {
                 );
               })}
 
-              <View style={[styles.totalRow, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Total
-                </ThemedText>
-                <ThemedText type="smallBold" style={{ fontSize: 18, color: GREEN }}>
-                  {money(total)}
+              {/* The tax taken out of the agreed price, then added back — so
+                  the farmer can see what they are paying tax on, and the last
+                  line is still the number they were quoted. */}
+              <View style={[styles.taxBox, { backgroundColor: theme.backgroundElement }]}>
+                {[
+                  { label: 'Taxable value', value: tax.taxable },
+                  { label: 'CGST 2.5%', value: tax.cgst },
+                  { label: 'SGST 2.5%', value: tax.sgst },
+                ].map((r) => (
+                  <View key={r.label} style={styles.taxRow}>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {r.label}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {money(r.value)}
+                    </ThemedText>
+                  </View>
+                ))}
+
+                <View style={[styles.taxRule, { borderTopColor: theme.textSecondary }]} />
+
+                <View style={styles.taxRow}>
+                  <ThemedText type="smallBold">Total</ThemedText>
+                  <ThemedText type="smallBold" style={{ fontSize: 18, color: GREEN }}>
+                    {money(total)}
+                  </ThemedText>
+                </View>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.taxNote}>
+                  Prices include 5% GST.
                 </ThemedText>
               </View>
 
@@ -647,6 +714,10 @@ export default function GiveProductScreen() {
 }
 
 const styles = StyleSheet.create({
+  taxBox: { borderRadius: Spacing.three, padding: Spacing.three, marginTop: Spacing.three },
+  taxRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+  taxRule: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: Spacing.two, opacity: 0.4 },
+  taxNote: { fontSize: 11, marginTop: Spacing.one },
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row',

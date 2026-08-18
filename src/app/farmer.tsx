@@ -1,3 +1,4 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -7,16 +8,20 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
+  Platform,
   Pressable,
   StyleSheet,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CameraCapture } from '@/components/camera-capture';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Brand, Spacing } from '@/constants/theme';
+import { Brand, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -28,6 +33,7 @@ import {
   ProductSale,
   Visit,
 } from '@/lib/api';
+import { dueLabel } from '@/lib/dates';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GREEN = Brand.primary;
@@ -84,6 +90,14 @@ export default function FarmerScreen() {
   // Which sale line we are taking the follow-up after-photo for.
   const [afterFor, setAfterFor] = useState<{ saleId: string; index: number } | null>(null);
   const [uploadingAfter, setUploadingAfter] = useState(false);
+
+  // Setting the return date straight from a logged visit. `followUpFor` is the
+  // visit being edited, or null when the sheet is closed.
+  const [followUpFor, setFollowUpFor] = useState<Visit | null>(null);
+  const [fuDate, setFuDate] = useState<Date | null>(null);
+  const [fuNote, setFuNote] = useState('');
+  const [fuPicker, setFuPicker] = useState(false);
+  const [savingFu, setSavingFu] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -167,6 +181,38 @@ export default function FarmerScreen() {
         },
       ]
     );
+  };
+
+  /** Open the follow-up sheet on a visit, pre-filled with whatever it holds. */
+  const openFollowUp = (v: Visit) => {
+    setFollowUpFor(v);
+    setFuDate(v.nextFollowUpAt ? new Date(v.nextFollowUpAt) : null);
+    setFuNote(v.followUpNote ?? '');
+    setFuPicker(false);
+  };
+
+  /**
+   * Save the date onto the visit. `date` is passed in rather than read from
+   * state so Remove can clear it without first having to set state and wait a
+   * render — the two paths are the same request with a different value.
+   */
+  const saveFollowUp = async (date: Date | null) => {
+    if (!followUpFor || savingFu) return;
+    setSavingFu(true);
+    try {
+      const updated = await api.setVisitFollowUp(followUpFor._id, {
+        nextFollowUpAt: date ? date.toISOString() : null,
+        followUpNote: date ? fuNote.trim() : '',
+      });
+      // Patch the one card in place: refetching would rebuild the whole screen
+      // and lose the scroll position the agent was reading from.
+      setVisits((vs) => vs.map((v) => (v._id === updated._id ? { ...v, ...updated } : v)));
+      setFollowUpFor(null);
+    } catch (e: any) {
+      Alert.alert('Could not save the follow-up', e?.message || 'Please try again.');
+    } finally {
+      setSavingFu(false);
+    }
   };
 
   const captureAfter = async (uri: string) => {
@@ -363,11 +409,26 @@ export default function FarmerScreen() {
                   <ThemedText type="smallBold" style={{ marginBottom: Spacing.two }}>
                     Visits ({visits.length})
                   </ThemedText>
-                  {visits.map((v) => {
+                  {visits.map((v, i) => {
                     const photos = [
                       { url: v.farmPhotoUrl, label: 'Farm' },
                       { url: v.farmerPhotoUrl, label: 'With farmer' },
                     ].filter((p) => p.url);
+                    /**
+                     * The day the agent promised to come back, as set at THIS
+                     * visit. Visits are newest-first and logging one overwrites
+                     * the farmer's pending date, so only the top card's date is
+                     * still owed — every older one was superseded.
+                     */
+                    const due = dueLabel(v.nextFollowUpAt);
+                    const pending = i === 0 && !!due;
+                    /**
+                     * Only the newest visit can be given a date from here.
+                     * The farmer holds one live follow-up, so a date typed onto
+                     * an older card would either do nothing or send the agent
+                     * back to someone they have since been to see.
+                     */
+                    const latest = i === 0;
                     return (
                       <ThemedView key={v._id} type="backgroundElement" style={styles.saleCard}>
                         <View style={styles.saleItemHead}>
@@ -384,7 +445,7 @@ export default function FarmerScreen() {
                           <View style={styles.salePhotos}>
                             {photos.map((p) => (
                               <View key={p.label} style={{ flex: 1 }}>
-                                <Image source={{ uri: p.url }} style={styles.salePhoto} contentFit="cover" />
+                                <TappablePhoto uri={p.url} style={styles.salePhoto} caption={p.label} />
                                 <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
                                   {p.label}
                                 </ThemedText>
@@ -397,6 +458,133 @@ export default function FarmerScreen() {
                             {v.notes}
                           </ThemedText>
                         ) : null}
+                        {/* When the agent said they would return, and why — both
+                            as written on the day, not the farmer's current
+                            reason, which a later visit will have overwritten.
+
+                            The pending one is a banner and opens the visit
+                            screen, because it is the only follow-up here that
+                            is still work owed. Superseded dates stay as one
+                            quiet line: they explain the history without
+                            competing with it. */}
+                        {pending ? (
+                          // Tapping the band edits the promise it is showing.
+                          // Going out to the farm is a separate decision, so it
+                          // gets its own button rather than being what happens
+                          // when the date itself is tapped.
+                          <Pressable
+                            onPress={() => openFollowUp(v)}
+                            style={({ pressed }) => [
+                              styles.followUpDue,
+                              {
+                                backgroundColor: due!.overdue
+                                  ? Brand.dangerSurface
+                                  : Brand.accentSurface,
+                              },
+                              pressed && { opacity: 0.85 },
+                            ]}>
+                            <Ionicons
+                              name="alarm"
+                              size={14}
+                              color={due!.overdue ? Brand.danger : AMBER}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <ThemedText
+                                type="smallBold"
+                                style={{ color: due!.overdue ? Brand.danger : AMBER }}>
+                                Follow up {due!.label}
+                              </ThemedText>
+                              {v.followUpNote ? (
+                                <ThemedText type="small" themeColor="textSecondary">
+                                  {v.followUpNote}
+                                </ThemedText>
+                              ) : null}
+                            </View>
+                            {/* The only way from here to Mark visit. Named for
+                                where it goes: the agent is being sent to a
+                                camera and a form, which is a different thing
+                                from correcting a date. */}
+                            <Pressable
+                              onPress={() =>
+                                router.push({
+                                  pathname: '/visit-farmer',
+                                  params: {
+                                    farmerId,
+                                    farmerName: farmerName || name || '',
+                                    farmerMobile,
+                                  },
+                                })
+                              }
+                              hitSlop={10}
+                              style={({ pressed }) => [
+                                styles.editDateBtn,
+                                pressed && { opacity: 0.7 },
+                              ]}>
+                              <Ionicons
+                                name="camera"
+                                size={12}
+                                color={due!.overdue ? Brand.danger : AMBER}
+                              />
+                              <ThemedText
+                                type="small"
+                                style={{
+                                  color: due!.overdue ? Brand.danger : AMBER,
+                                  fontWeight: '700',
+                                }}>
+                                Mark visit
+                              </ThemedText>
+                              <Ionicons
+                                name="chevron-forward"
+                                size={11}
+                                color={due!.overdue ? Brand.danger : AMBER}
+                              />
+                            </Pressable>
+                          </Pressable>
+                        ) : (
+                          <>
+                            {due ? (
+                              <View style={styles.whyBack}>
+                                <Ionicons
+                                  name="checkmark-done-outline"
+                                  size={12}
+                                  color={theme.textSecondary}
+                                />
+                                <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
+                                  Follow-up was set for {fmt(new Date(v.nextFollowUpAt!))}
+                                </ThemedText>
+                              </View>
+                            ) : null}
+                            {v.followUpNote ? (
+                              <View style={styles.whyBack}>
+                                <Ionicons name="alarm-outline" size={12} color={AMBER} />
+                                <ThemedText type="small" style={{ color: AMBER, flex: 1 }}>
+                                  {v.followUpNote}
+                                </ThemedText>
+                              </View>
+                            ) : null}
+                            {/* A visit logged without a return date is the
+                                common case now that the date is optional when
+                                marking one. This is where it gets added, so
+                                nobody has to log a visit that never happened
+                                just to promise a day. */}
+                            {latest && !due ? (
+                              <Pressable
+                                onPress={() => openFollowUp(v)}
+                                style={({ pressed }) => [
+                                  styles.addFollowUp,
+                                  pressed && { opacity: 0.8 },
+                                ]}>
+                                <Ionicons name="calendar-outline" size={14} color={GREEN} />
+                                <ThemedText
+                                  type="small"
+                                  style={{ color: GREEN, fontWeight: '700', flex: 1 }}>
+                                  Add next follow-up
+                                </ThemedText>
+                                <Ionicons name="add" size={14} color={GREEN} />
+                              </Pressable>
+                            ) : null}
+                          </>
+                        )}
                       </ThemedView>
                     );
                   })}
@@ -450,10 +638,12 @@ export default function FarmerScreen() {
                             <View style={styles.salePhotos}>
                               <View style={{ flex: 1 }}>
                                 {it.beforePhotoUrl ? (
-                                  <Image
-                                    source={{ uri: it.beforePhotoUrl }}
+                                  <TappablePhoto
+                                    uri={it.beforePhotoUrl}
+                                    group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
+                                    index={0}
                                     style={styles.salePhoto}
-                                    contentFit="cover"
+                                    caption={`${it.name} — before`}
                                   />
                                 ) : (
                                   <View style={[styles.salePhoto, styles.salePhotoEmpty]} />
@@ -465,10 +655,12 @@ export default function FarmerScreen() {
 
                               <View style={{ flex: 1 }}>
                                 {it.afterPhotoUrl ? (
-                                  <Image
-                                    source={{ uri: it.afterPhotoUrl }}
+                                  <TappablePhoto
+                                    uri={it.afterPhotoUrl}
+                                    group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
+                                    index={it.beforePhotoUrl ? 1 : 0}
                                     style={styles.salePhoto}
-                                    contentFit="cover"
+                                    caption={`${it.name} — after`}
                                   />
                                 ) : due ? (
                                   // The wait is over — one tap to capture it.
@@ -646,6 +838,107 @@ export default function FarmerScreen() {
       </SafeAreaView>
 
       {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
+
+      {/* Setting the return date on a visit already logged. A sheet rather than
+          a screen: the agent is reading the visit they are scheduling from, and
+          a push would take it away from them. */}
+      <Modal
+        visible={!!followUpFor}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFollowUpFor(null)}>
+        <Pressable style={styles.backdrop} onPress={() => setFollowUpFor(null)}>
+          {/* Swallows taps meant for the form, which would otherwise reach the
+              backdrop behind it and close the sheet mid-edit. */}
+          <Pressable onPress={() => {}}>
+            <ThemedView style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <ThemedText type="smallBold">Next follow-up</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {followUpFor
+                  ? `Visit on ${fmt(new Date(followUpFor.visitedAt))}`
+                  : ''}
+              </ThemedText>
+
+              <Pressable
+                onPress={() => setFuPicker(true)}
+                style={[
+                  styles.input,
+                  styles.dateBtn,
+                  { backgroundColor: theme.backgroundElement, marginTop: Spacing.three },
+                ]}>
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={fuDate ? GREEN : theme.textSecondary}
+                />
+                <ThemedText
+                  style={{ flex: 1, marginLeft: Spacing.two, color: fuDate ? theme.text : theme.textSecondary }}>
+                  {fuDate ? fmt(fuDate) : 'Pick a day to come back'}
+                </ThemedText>
+                <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+              </Pressable>
+
+              {fuPicker && (
+                <DateTimePicker
+                  value={fuDate ?? new Date(Date.now() + 7 * DAY_MS)}
+                  mode="date"
+                  minimumDate={new Date()}
+                  onChange={(event, selected) => {
+                    if (Platform.OS !== 'ios') setFuPicker(false);
+                    if (event.type === 'set' && selected) setFuDate(selected);
+                  }}
+                />
+              )}
+              {Platform.OS === 'ios' && fuPicker && (
+                <Pressable onPress={() => setFuPicker(false)} style={styles.doneBtn}>
+                  <ThemedText type="linkPrimary">Done</ThemedText>
+                </Pressable>
+              )}
+
+              <TextInput
+                value={fuNote}
+                onChangeText={setFuNote}
+                placeholder="Why come back? (optional)"
+                placeholderTextColor={theme.textSecondary}
+                style={[
+                  styles.input,
+                  { color: theme.text, backgroundColor: theme.backgroundElement },
+                ]}
+              />
+
+              <Pressable
+                onPress={() => saveFollowUp(fuDate)}
+                disabled={!fuDate || savingFu}
+                style={({ pressed }) => [
+                  styles.saveBtn,
+                  (!fuDate || savingFu || pressed) && { opacity: 0.7 },
+                ]}>
+                {savingFu ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>
+                    {followUpFor?.nextFollowUpAt ? 'Update follow-up' : 'Set follow-up'}
+                  </ThemedText>
+                )}
+              </Pressable>
+
+              {/* A date set by mistake has to be removable, or "optional" only
+                  holds until the first wrong tap. */}
+              {followUpFor?.nextFollowUpAt ? (
+                <Pressable
+                  onPress={() => saveFollowUp(null)}
+                  disabled={savingFu}
+                  style={({ pressed }) => [styles.doneBtn, pressed && { opacity: 0.7 }]}>
+                  <ThemedText type="small" style={{ color: Brand.danger, fontWeight: '700' }}>
+                    Remove follow-up
+                  </ThemedText>
+                </Pressable>
+              ) : null}
+            </ThemedView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -662,6 +955,48 @@ function Stat({ label, value, theme }: { label: string; value: string; theme: an
 }
 
 const styles = StyleSheet.create({
+  /** Go out to the farm, sitting inside the band that says a return is owed. */
+  editDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 3,
+    borderRadius: Radius.md,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+  },
+  /** Offered on the newest visit when no return date was set at the time. */
+  addFollowUp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: `${GREEN}66`,
+    backgroundColor: Brand.primarySurface,
+  },
+  // The reason a return was promised, as written at that visit.
+  whyBack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    marginTop: Spacing.two,
+  },
+  /** The follow-up still owed, on its own tinted band so it is not read as
+   *  another note about the visit that has been made. */
+  followUpDue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.md,
+  },
   fieldLabel: { marginTop: Spacing.three },
   warnRow: {
     flexDirection: 'row',

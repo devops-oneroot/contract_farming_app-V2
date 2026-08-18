@@ -23,14 +23,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { Farmer, Visit, api, visitSourceLabel } from '@/lib/api';
+import { Farmer, Visit, api, onboarderId, visitSourceLabel } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
+import { dueLabel } from '@/lib/dates';
 
 const GREEN = Brand.primary;
 
@@ -59,48 +61,34 @@ function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: numb
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+/**
+ * When a farmer was registered — day and clock time. Empty when the date is
+ * missing or unreadable, so the row simply drops the segment rather than
+ * printing a dash.
+ *
+ * The year is dropped for the current one — it is the same on nearly every row,
+ * and this shares a line with the phone number.
+ */
+function fmtAdded(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const day = d.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+  // Comma rather than another dot: this line already separates its parts with
+  // dots, and a third one would make the date and time read as two facts
+  // instead of one moment.
+  return `${day}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function fmtDist(km: number | null) {
   if (km == null) return 'No location';
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(1)} km`;
-}
-
-/**
- * How the dashboard's "visit by" day reads on a row, and whether it has been
- * missed. Null when no date was set, which is most farmers.
- *
- * Both dates are flattened to midnight before comparing: the stored value is an
- * instant, so a visit due today would otherwise count as overdue from the
- * moment that instant passed — usually first thing in the morning, before the
- * agronomist had any chance to go.
- */
-function dueLabel(visitDate?: string | null): { label: string; overdue: boolean } | null {
-  if (!visitDate) return null;
-  const d = new Date(visitDate);
-  if (Number.isNaN(d.getTime())) return null;
-
-  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const today = new Date();
-  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const days = Math.round((day.getTime() - midnight.getTime()) / 86400000);
-
-  /**
-   * The calendar date is always spelled out, even when a relative word would
-   * do. "Overdue by 3 days" alone leaves the agent counting backwards to work
-   * out which day was missed, and "today" gives them nothing to check a written
-   * note or a farmer's own recollection against.
-   */
-  const on = day.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-
-  if (days === 0) return { label: `Today · ${on}`, overdue: false };
-  if (days === 1) return { label: `Tomorrow · ${on}`, overdue: false };
-  if (days < 0) {
-    return {
-      label: `Overdue by ${-days} day${days === -1 ? '' : 's'} · ${on}`,
-      overdue: true,
-    };
-  }
-  return { label: `In ${days} days · ${on}`, overdue: false };
 }
 
 type Row = Farmer & { distance: number | null; visited: boolean };
@@ -108,17 +96,22 @@ type Row = Farmer & { distance: number | null; visited: boolean };
 /**
  * The four views over the day's roster.
  *
- * `dashboard` is the work handed down from the admin dashboard: a farmer with
- * no `onboardedBy` was added there rather than registered in the field, which
- * is exactly what "someone upstairs wants this one visited" looks like in the
- * data. `followup` is everything still to visit today, dashboard work included.
- * `random` is a trip nobody planned, so it offers every farmer — the visit it
- * produces is stamped with how that farmer reached us in the first place.
+ * `todo` is everyone still to see today, whoever put them on the list — work
+ * handed down from the admin dashboard and farmers this agent registered
+ * themselves, together. They used to be two tabs, Assigned and Yours, which
+ * meant the same question ("who is left?") had two answers and an agent
+ * finishing one tab could believe they were done. Each row carries a Yours or
+ * Assigned tag instead, so where a farmer came from is still on the screen
+ * without splitting the day in half to say it.
+ *
+ * `followup` is everyone with a promised date. `random` is a trip nobody
+ * planned, so it offers every farmer — the visit it produces is stamped with
+ * how that farmer reached us in the first place.
  */
 const TABS = [
-  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'todo', label: 'To visit' },
   { key: 'followup', label: 'Follow up' },
-  { key: 'random', label: 'Random visit' },
+  { key: 'random', label: 'Random' },
   { key: 'visited', label: 'Visited' },
 ] as const;
 
@@ -128,9 +121,9 @@ const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.key, t.label])) as Recor
 
 /** What each tab says when it has nothing to show. */
 const EMPTY_STATE: Record<Tab, { icon: keyof typeof Ionicons.glyphMap; text: string }> = {
-  dashboard: {
+  todo: {
     icon: 'clipboard-outline',
-    text: 'No visits assigned from the dashboard right now.',
+    text: 'Nobody left to visit today. Farmers with a promised date are under Follow up.',
   },
   followup: {
     icon: 'checkmark-done-circle-outline',
@@ -216,7 +209,7 @@ export default function FarmVisitsScreen() {
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [visitsByFarmer, setVisitsByFarmer] = useState<Record<string, Visit>>({});
   const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const [tab, setTab] = useState<Tab>('todo');
   /**
    * The farmer whose "no visit needed" reason is being asked for, and the
    * answers so far. The reason is required — an unexplained disappearance from
@@ -467,29 +460,45 @@ export default function FarmVisitsScreen() {
         ),
     [rows, matches]
   );
-  const visited = useMemo(() => rows.filter((r) => r.visited && matches(r)), [rows, matches]);
   /**
-   * The dashboard's own list: farmers put on this agronomist's plate from the
-   * admin dashboard rather than registered by them in the field, still
-   * unvisited.
+   * Today's visits, the most recent at the top.
    *
-   * `onboardedBy` holds whoever registered the farmer on the ground. Anything
-   * other than this agronomist means the dashboard handed the farmer over —
-   * null when an admin created them there (that endpoint never sets the field),
-   * another agronomist's id when an admin reassigned them. Matching on "not
-   * mine" rather than "null" is what catches that second case, and it is the
-   * same rule the server uses for its onboarded/assigned tallies.
+   * Ordered by when the visit was made rather than when the farmer was
+   * registered: the tab only ever holds today's work, so the one just finished
+   * is what the agent is looking for, and inheriting the roster's newest-first
+   * order buried it under farmers seen hours earlier who simply happened to
+   * have joined later.
    */
-  const assigned = useMemo(
+  const visited = useMemo(
+    () =>
+      rows
+        .filter((r) => r.visited && matches(r))
+        .sort((a, b) => {
+          const at = visitsByFarmer[a._id]?.visitedAt;
+          const bt = visitsByFarmer[b._id]?.visitedAt;
+          return (bt ? +new Date(bt) : 0) - (at ? +new Date(at) : 0);
+        }),
+    [rows, matches, visitsByFarmer]
+  );
+  /**
+   * Everyone still to see today, from either source.
+   *
+   * Which source a farmer came from is read off `onboardedBy` per row rather
+   * than deciding which list they land in: it holds whoever registered them on
+   * the ground, so anything other than this agronomist means the dashboard
+   * handed them over — null when an admin created them there (that endpoint
+   * never sets the field), another agronomist's id when an admin reassigned
+   * them. Matching on "not mine" rather than "null" is what catches that second
+   * case, and it is the same rule the server uses for its tallies.
+   */
+  const todo = useMemo(
     () =>
       remaining.filter(
-        (r) =>
-          r.onboardedBy !== user?._id &&
-          // Once a follow-up date is set the farmer has moved to Follow up, and
-          // showing them in both would have the agent visit twice.
-          !r.nextFollowUpAt
+        // Once a follow-up date is set the farmer has moved to Follow up, and
+        // showing them in both would have the agent visit twice.
+        (r) => !r.nextFollowUpAt
       ),
-    [remaining, user?._id]
+    [remaining]
   );
   /**
    * The Random tab: a lookup, not a roster. It stays empty until something is
@@ -537,7 +546,7 @@ export default function FarmVisitsScreen() {
   );
 
   const counts: Record<Tab, number> = {
-    dashboard: assigned.length,
+    todo: todo.length,
     followup: followUps.length,
     // What has been picked, not what the search happens to be showing — the
     // count is the size of the day's random round.
@@ -551,8 +560,8 @@ export default function FarmVisitsScreen() {
    * turns it back into what has been picked.
    */
   const list: Row[] =
-    tab === 'dashboard'
-      ? assigned
+    tab === 'todo'
+      ? todo
       : tab === 'followup'
         ? followUps
         : tab === 'visited'
@@ -688,7 +697,7 @@ export default function FarmVisitsScreen() {
           {/* Who they are, across the full width of the card. */}
           <View style={styles.rowTop}>
           {f.visited && thumb ? (
-            <Image source={{ uri: thumb }} style={styles.rowThumb} contentFit="cover" />
+            <TappablePhoto uri={thumb} style={styles.rowThumb} caption={f.name} />
           ) : (
             <View
               style={[
@@ -705,18 +714,55 @@ export default function FarmVisitsScreen() {
             </View>
           )}
           <View style={{ flex: 1, minWidth: 0 }}>
-            <ThemedText type="smallBold" numberOfLines={1} style={styles.rowName}>
-              {f.name}
-            </ThemedText>
-            {f.mobile ? (
-              // `numberOfLines` matters as much as the width: a phone number
-              // broken across two lines mid-digit is unreadable and unusable.
+            <View style={styles.nameRow}>
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.rowName}>
+                {f.name}
+              </ThemedText>
+              {/*
+                Whose farmer this is. `onboardedBy` holds whoever registered
+                them on the ground, so anything other than this agent means the
+                dashboard handed them over — null when an admin created them
+                there, another id when they were reassigned. The same rule the
+                Assigned tab uses, said on the row so it holds wherever the
+                farmer appears.
+              */}
+              <View
+                style={[
+                  styles.ownTag,
+                  {
+                    backgroundColor:
+                      onboarderId(f) === user?._id ? Brand.primarySurface : Brand.secondarySurface,
+                  },
+                ]}>
+                <Ionicons
+                  name={onboarderId(f) === user?._id ? 'person-add' : 'briefcase'}
+                  size={9}
+                  color={onboarderId(f) === user?._id ? GREEN : Brand.secondary}
+                />
+                <ThemedText
+                  type="small"
+                  style={[
+                    styles.ownTagText,
+                    { color: onboarderId(f) === user?._id ? GREEN : Brand.secondary },
+                  ]}>
+                  {onboarderId(f) === user?._id ? 'Yours' : 'Assigned'}
+                </ThemedText>
+              </View>
+            </View>
+            {/* Number and the day they were registered on one line. Joined
+                rather than stacked so the row keeps its height, and built from
+                whichever parts exist — a farmer with no number still shows
+                their date instead of an empty line.
+
+                `numberOfLines` matters as much as the width: a phone number
+                broken across two lines mid-digit is unreadable and unusable. */}
+            {f.mobile || fmtAdded(f.createdAt) ? (
               <ThemedText
                 type="small"
                 themeColor="textSecondary"
                 numberOfLines={1}
                 style={styles.rowMobile}>
-                {f.mobile}
+                {[f.mobile, fmtAdded(f.createdAt)].filter(Boolean).join('  ·  ')}
               </ThemedText>
             ) : null}
             <ThemedText
@@ -795,7 +841,7 @@ export default function FarmVisitsScreen() {
           {/* "This one does not need a trip" — only on the two tabs that list
               work still owed. Asking why is the point: a farmer vanishing from
               the day with no explanation is what this replaces. */}
-          {(tab === 'dashboard' || tab === 'followup') && !f.visited ? (
+          {(tab === 'todo' || tab === 'followup') && !f.visited ? (
             <Pressable
               onPress={() => {
                 setSkipReason('');
@@ -906,7 +952,7 @@ export default function FarmVisitsScreen() {
           Visited are both records of visits already made, where "go here next"
           is not the question being asked.
         */}
-        {(tab === 'dashboard' || tab === 'followup') && nearest && (
+        {(tab === 'todo' || tab === 'followup') && nearest && (
           <Pressable
             onPress={() => setMapHtml(farmersMapHtml(pins, me))}
             style={({ pressed }) => [styles.nearestCard, pressed && { opacity: 0.9 }]}>
@@ -927,9 +973,9 @@ export default function FarmVisitsScreen() {
 
 
         {/*
-          All four tabs are on screen at once. They stack the count UNDER the
+          All five tabs are on screen at once. They stack the count UNDER the
           label rather than sitting beside it — "Follow up (11)" on one line
-          needs more width than a quarter of a phone has, and the strip used to
+          needs more width than a fifth of a phone has, and the strip used to
           scroll sideways, which hid whichever tabs were off either edge.
         */}
         <View style={styles.segment}>
@@ -941,7 +987,13 @@ export default function FarmVisitsScreen() {
                 key={key}
                 onPress={() => setTab(key)}
                 style={[styles.segBtn, on && { backgroundColor: GREEN }]}>
-                <ThemedText numberOfLines={1} style={[styles.segLabel, { color: colour }]}>
+                {/* Two lines allowed: at a fifth of a narrow screen — or on a
+                    phone set to a large system font — "Follow up" truncates on
+                    one. Wrapping keeps the word whole and grows every tab
+                    equally, so the strip stays level. */}
+                <ThemedText
+                  numberOfLines={2}
+                  style={[styles.segLabel, { color: colour }]}>
                   {label}
                 </ThemedText>
                 <ThemedText style={[styles.segCount, { color: colour }]}>{counts[key]}</ThemedText>
@@ -1266,13 +1318,25 @@ export default function FarmVisitsScreen() {
                 {selectedVisit.farmPhotoUrl ? (
                   <>
                     <ThemedText type="small" themeColor="textSecondary" style={styles.detailLabel}>Farm photo</ThemedText>
-                    <Image source={{ uri: selectedVisit.farmPhotoUrl }} style={styles.detailPhoto} contentFit="cover" />
+                    <TappablePhoto
+                      uri={selectedVisit.farmPhotoUrl}
+                      group={[selectedVisit.farmPhotoUrl, selectedVisit.farmerPhotoUrl].filter(Boolean)}
+                      index={0}
+                      style={styles.detailPhoto}
+                      caption="farm photo"
+                    />
                   </>
                 ) : null}
                 {selectedVisit.farmerPhotoUrl ? (
                   <>
                     <ThemedText type="small" themeColor="textSecondary" style={styles.detailLabel}>Photo with farmer</ThemedText>
-                    <Image source={{ uri: selectedVisit.farmerPhotoUrl }} style={styles.detailPhoto} contentFit="cover" />
+                    <TappablePhoto
+                      uri={selectedVisit.farmerPhotoUrl}
+                      group={[selectedVisit.farmPhotoUrl, selectedVisit.farmerPhotoUrl].filter(Boolean)}
+                      index={selectedVisit.farmPhotoUrl ? 1 : 0}
+                      style={styles.detailPhoto}
+                      caption="photo with the farmer"
+                    />
                   </>
                 ) : null}
                 {!selectedVisit.farmPhotoUrl && !selectedVisit.farmerPhotoUrl ? (
@@ -1283,6 +1347,18 @@ export default function FarmVisitsScreen() {
                   <>
                     <ThemedText type="small" themeColor="textSecondary" style={styles.detailLabel}>Notes</ThemedText>
                     <ThemedText type="small">{selectedVisit.notes}</ThemedText>
+                  </>
+                ) : null}
+
+                {/* What was promised at THIS visit. The farmer record only
+                    holds the current reason, so an older visit could not
+                    otherwise say why it was scheduled. */}
+                {selectedVisit.followUpNote ? (
+                  <>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.detailLabel}>
+                      Why come back
+                    </ThemedText>
+                    <ThemedText type="small">{selectedVisit.followUpNote}</ThemedText>
                   </>
                 ) : null}
 
@@ -1412,7 +1488,8 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.two,
   },
   segBtn: {
-    // Equal quarters, so every tab is visible without scrolling.
+    // Equal fifths, so every tab is visible without scrolling. Labels are
+    // kept to one short word for the same reason.
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1423,7 +1500,7 @@ const styles = StyleSheet.create({
   },
   // Explicit lineHeight: ThemedText's `small` pins it at 20, which would leave
   // a tall gap around an 11pt label.
-  segLabel: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  segLabel: { fontSize: 11, lineHeight: 14, fontWeight: '700', textAlign: 'center' },
   segCount: { fontSize: 15, lineHeight: 19, fontWeight: '800' },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.two },
   pager: {
@@ -1450,7 +1527,18 @@ const styles = StyleSheet.create({
   // actions underneath. Side-by-side, three buttons left the name truncated and
   // the phone number wrapped across two lines.
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  rowName: { fontSize: 15 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  ownTag: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Spacing.five,
+  },
+  ownTagText: { fontSize: 9, fontWeight: '800' },
+  rowName: { fontSize: 15, flexShrink: 1 },
   rowActions: {
     flexDirection: 'row',
     alignItems: 'center',

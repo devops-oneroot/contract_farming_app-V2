@@ -22,7 +22,8 @@ import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { Aggregator, api, DateRange, Farmer } from '@/lib/api';
+import { FilterPicker } from '@/components/filter-picker';
+import { Aggregator, api, DateRange, Farmer, onboarderId, onboarderName } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
 const GREEN = Brand.primary;
@@ -34,6 +35,28 @@ type TabKey = 'farmers' | 'aggregators';
 // Wait this long after the last keystroke before asking the server, so typing a
 // name doesn't fire a request per character.
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * Append a page, dropping anyone already held.
+ *
+ * The list is newest-first, so a farmer registered between two requests pushes
+ * everyone down a place and the row on the boundary arrives twice. Without this
+ * they would render twice under the same key.
+ */
+function merge<T extends { _id: string }>(prev: T[], next: T[]) {
+  const seen = new Set(prev.map((r) => r._id));
+  return [...prev, ...next.filter((r) => !seen.has(r._id))];
+}
+
+/**
+ * Rows fetched per request. Small on purpose: this list opens on a phone over
+ * a village mobile connection, and the first screenful arriving quickly matters
+ * more than having the whole roster in hand.
+ */
+const PAGE_SIZE = 10;
+
+/** How close to the bottom starts the next page — about one card's warning. */
+const LOAD_MORE_SLACK = 320;
 
 /**
  * The window the list is narrowed to, sent to the server as `?from=&to=`.
@@ -93,6 +116,30 @@ function fmtDate(iso?: string) {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/**
+ * When a record was created, as one short line: "17 Aug - 6:34 pm".
+ *
+ * The time is here because a day alone cannot separate two farmers registered
+ * on the same round, and an agent retracing a morning needs to know which came
+ * first. Kept to a single line so it can sit beside the name instead of
+ * claiming a row of its own above the card.
+ *
+ * The year is dropped for the current one. It is the same on nearly every row,
+ * and spelling it out is what stopped the date fitting next to the name.
+ */
+function fmtStamp(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const day = d.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+  return `${day} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 export default function OnboardedScreen() {
   const params = useLocalSearchParams<{ scope?: string; t?: string }>();
   const theme = useTheme();
@@ -105,6 +152,17 @@ export default function OnboardedScreen() {
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [aggregators, setAggregators] = useState<Aggregator[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * How far down each list has been read, and whether the server has more.
+   *
+   * Kept per tab: switching to aggregators and back must not throw away the
+   * farmers already scrolled through, and each side runs out at its own point.
+   * `total` is the server's count of everything matching the filters, which is
+   * what the tab badges show — `items.length` would only ever say 10.
+   */
+  const [farmerPage, setFarmerPage] = useState({ page: 1, hasMore: false, total: 0 });
+  const [aggPage, setAggPage] = useState({ page: 1, hasMore: false, total: 0 });
+  const [loadingMore, setLoadingMore] = useState(false);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   // Narrow the list to when people were registered. Null = show everything.
@@ -112,11 +170,30 @@ export default function OnboardedScreen() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   /**
-   * Set when the home screen's "Onboarded" tile sends us here. That tile counts
-   * farmers this agent registered themselves, so the list has to ask the same
-   * question or its length would not match the number that was tapped.
+   * Whose farmers to show, by the agronomist who registered them. Null is
+   * everyone's.
+   *
+   * Replaces an "only mine" boolean that could be switched off but never on —
+   * the home screen's "Onboarded" tile was the only thing that ever set it.
+   * That tile now sets this to the current agent, which asks the same question
+   * and lets any other agent be chosen too.
    */
-  const [onlyMine, setOnlyMine] = useState(false);
+  const [onboardedBy, setOnboardedBy] = useState<string | null>(null);
+  const [whoOpen, setWhoOpen] = useState(false);
+  /** The agronomists to choose between, with how many each registered. */
+  const [staff, setStaff] = useState<{ _id: string; name: string; onboardedCount?: number }[]>([]);
+
+  /**
+   * The agronomists to choose between. Loaded once and kept: the counts come
+   * from the server's own onboarded tally, so the picker and the list can
+   * never disagree about how many someone registered.
+   */
+  useEffect(() => {
+    api
+      .listAgronomistsWithCounts()
+      .then(setStaff)
+      .catch(() => setStaff([]));
+  }, []);
 
   // Debounce the box; `search` is what actually gets sent to the server.
   useEffect(() => {
@@ -129,22 +206,46 @@ export default function OnboardedScreen() {
   const reqId = useRef(0);
 
   const load = useCallback(
-    async (q: string, range: DateFilter | null, mine: boolean) => {
+    async (q: string, range: DateFilter | null, by: string | null) => {
       if (!user) return;
       const id = ++reqId.current;
       // Search, date window and scope are all applied by the server, so what
       // arrives is already exactly what the list should show.
       const window = range ? { from: range.from, to: range.to } : undefined;
+      const empty = { items: [], total: 0, hasMore: false };
       try {
         const [f, a] = await Promise.all([
-          api.listAgronomistFarmers(user._id, q, window, mine).catch(() => []),
-          // Aggregators have no "registered by" of their own, so the scope
-          // does not apply to them.
-          api.listAggregators(user._id, q, window).catch(() => []),
+          /**
+           * Every farmer, not only this agent's.
+           *
+           * The tab is a directory: an agent standing in a village needs to
+           * find whoever is in front of them, and scoping it to their own
+           * roster meant a farmer a colleague registered simply could not be
+           * looked up. "Onboarded by you" narrows it back when that is the
+           * question being asked.
+           */
+          api
+            .listAllFarmersPage({
+              search: q,
+              range: window,
+              onboardedBy: by ?? undefined,
+              page: 1,
+              limit: PAGE_SIZE,
+            })
+            .catch(() => empty),
+          // Everyone's, for the same reason: an aggregator is a buyer the team
+          // deals with, not one agent's private contact.
+          api
+            .listAggregatorsPage({ search: q, range: window, page: 1, limit: PAGE_SIZE })
+            .catch(() => empty),
         ]);
         if (id !== reqId.current) return; // a newer request already superseded this one
-        setFarmers(f);
-        setAggregators(a);
+        setFarmers(f.items as Farmer[]);
+        setAggregators(a.items as Aggregator[]);
+        // Back to page 1 for both: the filters just changed, so how far the
+        // old list had been read says nothing about this one.
+        setFarmerPage({ page: 1, hasMore: f.hasMore, total: f.total });
+        setAggPage({ page: 1, hasMore: a.hasMore, total: a.total });
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -152,12 +253,60 @@ export default function OnboardedScreen() {
     [user]
   );
 
+  /**
+   * Fetch the next page of whichever tab is showing.
+   *
+   * Only the visible tab grows. Loading the other one in the background would
+   * spend a field agent's data on a list they are not looking at, and the two
+   * run out at different points anyway.
+   */
+  const loadMore = useCallback(async () => {
+    const meta = tab === 'farmers' ? farmerPage : aggPage;
+    if (loading || loadingMore || !meta.hasMore) return;
+
+    // Tied to the same counter the first load uses: if a search or filter lands
+    // while this page is in flight, its rows belong to a list that no longer
+    // exists and must not be appended to the new one.
+    const id = reqId.current;
+    const next = meta.page + 1;
+    const window = dateFilter ? { from: dateFilter.from, to: dateFilter.to } : undefined;
+    setLoadingMore(true);
+    try {
+      if (tab === 'farmers') {
+        const r = await api.listAllFarmersPage({
+          search,
+          range: window,
+          onboardedBy: onboardedBy ?? undefined,
+          page: next,
+          limit: PAGE_SIZE,
+        });
+        if (id !== reqId.current) return;
+        setFarmers((prev) => merge(prev, r.items as Farmer[]));
+        setFarmerPage({ page: next, hasMore: r.hasMore, total: r.total });
+      } else {
+        const r = await api.listAggregatorsPage({
+          search,
+          range: window,
+          page: next,
+          limit: PAGE_SIZE,
+        });
+        if (id !== reqId.current) return;
+        setAggregators((prev) => merge(prev, r.items as Aggregator[]));
+        setAggPage({ page: next, hasMore: r.hasMore, total: r.total });
+      }
+    } catch {
+      // Leave the list as it is; the footer's tap target is still there to retry.
+    } finally {
+      if (id === reqId.current) setLoadingMore(false);
+    }
+  }, [tab, farmerPage, aggPage, loading, loadingMore, search, dateFilter, onboardedBy]);
+
   // Runs on focus, and again whenever the debounced search or the date filter
   // changes while focused.
   useFocusEffect(
     useCallback(() => {
-      load(search, dateFilter, onlyMine);
-    }, [load, search, dateFilter, onlyMine])
+      load(search, dateFilter, onboardedBy);
+    }, [load, search, dateFilter, onboardedBy])
   );
 
   /**
@@ -169,7 +318,7 @@ export default function OnboardedScreen() {
   useEffect(() => {
     if (params.scope !== 'onboardedToday') return;
     setTab('farmers');
-    setOnlyMine(true);
+    setOnboardedBy(user?._id ?? null);
     setDateFilter({
       label: 'Today',
       from: startOfDay(new Date()),
@@ -234,11 +383,26 @@ export default function OnboardedScreen() {
               color={dateFilter ? '#fff' : theme.textSecondary}
             />
           </Pressable>
+          {/* Whose farmers. Now that the tab lists everyone's, "who registered
+              this one" is the question the list most needs narrowing by. */}
+          <Pressable
+            onPress={() => setWhoOpen(true)}
+            style={({ pressed }) => [
+              styles.filterBtn,
+              onboardedBy ? { backgroundColor: GREEN, borderColor: GREEN } : null,
+              pressed && { opacity: 0.85 },
+            ]}>
+            <Ionicons
+              name="people-outline"
+              size={18}
+              color={onboardedBy ? '#fff' : theme.textSecondary}
+            />
+          </Pressable>
         </View>
 
         {/* An active filter has to be visible, or an empty list looks like lost
             data rather than a filter doing its job. */}
-        {dateFilter || onlyMine ? (
+        {dateFilter || onboardedBy ? (
           <View style={styles.filterChips}>
             {dateFilter ? (
               <View style={styles.activeFilter}>
@@ -251,13 +415,15 @@ export default function OnboardedScreen() {
                 </Pressable>
               </View>
             ) : null}
-            {onlyMine ? (
+            {onboardedBy ? (
               <View style={styles.activeFilter}>
                 <Ionicons name="person-add" size={12} color={GREEN} />
                 <ThemedText type="small" style={styles.activeFilterText}>
-                  Onboarded by you
+                  {onboardedBy === user?._id
+                    ? 'Onboarded by you'
+                    : `By ${staff.find((a) => a._id === onboardedBy)?.name ?? 'agent'}`}
                 </ThemedText>
-                <Pressable onPress={() => setOnlyMine(false)} hitSlop={10}>
+                <Pressable onPress={() => setOnboardedBy(null)} hitSlop={10}>
                   <Ionicons name="close-circle" size={16} color={GREEN} />
                 </Pressable>
               </View>
@@ -269,7 +435,10 @@ export default function OnboardedScreen() {
         <View style={styles.segment}>
           {(['farmers', 'aggregators'] as TabKey[]).map((k) => {
             const on = tab === k;
-            const count = k === 'farmers' ? farmers.length : aggregators.length;
+            // The server's count of everything matching the filters. Using how
+            // many are loaded would freeze at 10 and then climb as the agent
+            // scrolled, which reads as records appearing out of nowhere.
+            const count = k === 'farmers' ? farmerPage.total : aggPage.total;
             // Farmers are green (crops), aggregators terracotta (the buyer side).
             const tint = k === 'farmers' ? GREEN : CLAY;
             return (
@@ -288,10 +457,18 @@ export default function OnboardedScreen() {
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
+          // Fires while the finger is still moving, so the next page is usually
+          // in place before the agent reaches the end of what is loaded.
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+            const fromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+            if (fromBottom < LOAD_MORE_SLACK) loadMore();
+          }}
           refreshControl={
             <RefreshControl
               refreshing={false}
-              onRefresh={() => load(search, dateFilter, onlyMine)}
+              onRefresh={() => load(search, dateFilter, onboardedBy)}
             />
           }>
           {loading ? (
@@ -314,13 +491,6 @@ export default function OnboardedScreen() {
                 key={f._id}
                 onPress={() => router.push({ pathname: '/farmer', params: { farmerId: f._id, name: f.name } })}
                 style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}>
-                {/* Hard right of the card, above the call button, so the dates
-                    line up in a column down the whole list. */}
-                {fmtDate(f.createdAt) ? (
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.dateText}>
-                    {fmtDate(f.createdAt)}
-                  </ThemedText>
-                ) : null}
                 <View style={styles.cardBody}>
                   <View style={styles.avatar}>
                     <ThemedText style={styles.avatarText}>
@@ -340,7 +510,12 @@ export default function OnboardedScreen() {
                         it; for a handed-over farmer it is when they first
                         registered. */}
                     {(() => {
-                      const mine = !!f.onboardedBy && f.onboardedBy === user?._id;
+                      // Read through the helper: this endpoint populates
+                      // `onboardedBy`, the agronomist-scoped one sends an id,
+                      // and comparing the object directly is always false.
+                      const by = onboarderId(f);
+                      const mine = !!by && by === user?._id;
+                      const who = onboarderName(f);
                       return (
                         <View
                           style={[
@@ -359,19 +534,34 @@ export default function OnboardedScreen() {
                               fontWeight: '700',
                               fontSize: 11,
                             }}>
-                            {mine ? 'Onboarded by you' : 'Assigned to you'}
+                            {/* Now that the list is everyone's, whose farmer
+                                this is matters more than whether it is yours. */}
+                            {mine ? 'Onboarded by you' : who ? `By ${who}` : 'From dashboard'}
                           </ThemedText>
                         </View>
                       );
                     })()}
                   </View>
-                  <Pressable
-                    onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
-                    hitSlop={8}
-                    style={styles.callBtn}>
-                    <Ionicons name="call" size={16} color="#fff" />
-                  </Pressable>
-                  <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+                  {/* Everything on the right edge in one column: the stamp
+                      above, the buttons below. It costs no height — the call
+                      button and the line of text together are no taller than
+                      the three lines of detail beside them — and it keeps the
+                      dates in a straight column down the list, which is what
+                      makes them scannable. */}
+                  <View style={styles.rightCol}>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.stampText}>
+                      {fmtStamp(f.createdAt)}
+                    </ThemedText>
+                    <View style={styles.actions}>
+                      <Pressable
+                        onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
+                        hitSlop={8}
+                        style={styles.callBtn}>
+                        <Ionicons name="call" size={16} color="#fff" />
+                      </Pressable>
+                      <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+                    </View>
+                  </View>
                 </View>
               </Pressable>
             ))
@@ -397,8 +587,53 @@ export default function OnboardedScreen() {
               </View>
             ))
           )}
+
+          {/* What the bottom of the list means. Scrolling normally brings the
+              next page in on its own; the button is what is left when that
+              misses — a short list that never scrolls, or a request that
+              failed — so the agent is never stuck at a stale end. */}
+          {!loading && list.length > 0 ? (
+            <View style={styles.listFoot}>
+              {loadingMore ? (
+                <View style={styles.footRow}>
+                  <ActivityIndicator size="small" color={GREEN} />
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Loading more…
+                  </ThemedText>
+                </View>
+              ) : (tab === 'farmers' ? farmerPage : aggPage).hasMore ? (
+                <Pressable
+                  onPress={loadMore}
+                  style={({ pressed }) => [styles.loadMoreBtn, pressed && { opacity: 0.8 }]}>
+                  <Ionicons name="chevron-down" size={14} color={GREEN} />
+                  <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                    Load {PAGE_SIZE} more
+                  </ThemedText>
+                </Pressable>
+              ) : (
+                <ThemedText type="small" themeColor="textSecondary">
+                  All {(tab === 'farmers' ? farmerPage : aggPage).total} {tab} shown
+                </ThemedText>
+              )}
+            </View>
+          ) : null}
         </ScrollView>
       </SafeAreaView>
+
+      <FilterPicker
+        visible={whoOpen}
+        title="Onboarded by"
+        allLabel="Everyone"
+        options={staff.map((a) => ({
+          value: a._id,
+          label:
+            (a._id === user?._id ? `${a.name} (you)` : a.name) +
+            (a.onboardedCount != null ? ` — ${a.onboardedCount}` : ''),
+        }))}
+        selected={onboardedBy}
+        onSelect={setOnboardedBy}
+        onClose={() => setWhoOpen(false)}
+      />
 
       {/* Filter by when someone was registered. */}
       <Modal
@@ -509,6 +744,19 @@ export default function OnboardedScreen() {
 }
 
 const styles = StyleSheet.create({
+  listFoot: { alignItems: 'center', paddingVertical: Spacing.four, gap: Spacing.two },
+  footRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  loadMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+    borderColor: `${GREEN}55`,
+    backgroundColor: Brand.primarySurface,
+  },
   container: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -519,7 +767,11 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.two,
   },
   trashLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dateText: { fontSize: 11, fontWeight: '600', alignSelf: 'flex-end' },
+  rightCol: { alignItems: 'flex-end', gap: Spacing.two },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  // Never wrapped: half a date on two lines is worse than a name that had to
+  // give up a few characters, so the detail column yields the width instead.
+  stampText: { fontSize: 11, fontWeight: '600' },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -623,8 +875,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     ...CardShadow,
   },
-  // The avatar / details / call row. Sits under the date, which is pinned to
-  // the card's right edge.
+  // Avatar, details, call button — the whole card is now this one row.
   cardBody: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   avatar: {
     width: 44,

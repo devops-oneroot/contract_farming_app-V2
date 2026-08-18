@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CameraCapture } from '@/components/camera-capture';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
@@ -332,10 +333,10 @@ export default function PendingScreen() {
                   type="backgroundElement"
                   style={styles.followCard}>
                   {f.beforePhotoUrl ? (
-                    <Image
-                      source={{ uri: f.beforePhotoUrl }}
+                    <TappablePhoto
+                      uri={f.beforePhotoUrl}
                       style={styles.followThumb}
-                      contentFit="cover"
+                      caption="before photo"
                     />
                   ) : (
                     <View style={[styles.followThumb, { backgroundColor: 'rgba(127,127,127,0.15)' }]} />

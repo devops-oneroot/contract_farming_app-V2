@@ -24,7 +24,7 @@ import { Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, isAgronomist } from '@/lib/api';
+import { api, isAgronomist, Role } from '@/lib/api';
 
 const LOGO = require('@/assets/images/logo.png');
 const GREEN = Brand.primary;
@@ -49,6 +49,23 @@ function bundleLabel() {
 }
 const GREEN_DARK = '#2f7d46';
 const GREEN_SURFACE = Brand.surface;
+
+/**
+ * What the badge says. Read from the role itself rather than "farmer or not":
+ * a senior agronomist was showing as a plain agronomist, which hid the one
+ * thing that distinguishes them — they answer everyone else's disease reports.
+ */
+function roleName(role?: Role) {
+  if (role === 'senior_agronomist') return 'Senior agronomist';
+  if (role === 'agronomist') return 'Agronomist';
+  return 'Farmer';
+}
+
+function roleLabel(role?: Role) {
+  if (role === 'senior_agronomist') return '⭐ SENIOR AGRONOMIST';
+  if (role === 'agronomist') return '👨‍🌾 AGRONOMIST';
+  return '🌱 FARMER';
+}
 
 export default function ProfileScreen() {
   const theme = useTheme();
@@ -96,7 +113,7 @@ export default function ProfileScreen() {
 
   const infoRows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
     { icon: 'call-outline', label: 'Mobile', value: user?.mobile ?? '—' },
-    { icon: 'person-outline', label: 'Role', value: isFarmer ? 'Farmer' : 'Agronomist' },
+    { icon: 'person-outline', label: 'Role', value: roleName(user?.role) },
     {
       icon: 'location-outline',
       label: 'Location',
@@ -129,7 +146,7 @@ export default function ProfileScreen() {
           {user?.name ?? 'User'}
         </ThemedText>
         <View style={styles.rolePill}>
-          <ThemedText style={styles.roleText}>{isFarmer ? '🌱 FARMER' : '👨‍🌾 AGRONOMIST'}</ThemedText>
+          <ThemedText style={styles.roleText}>{roleLabel(user?.role)}</ThemedText>
         </View>
       </View>
 

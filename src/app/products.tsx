@@ -8,6 +8,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CameraCapture } from '@/components/camera-capture';
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -250,7 +251,7 @@ export default function ProductsScreen() {
                   <View style={styles.photoRow}>
                     {prog?.imageUrl ? (
                       <>
-                        <Image source={{ uri: prog.imageUrl }} style={styles.proofThumb} contentFit="cover" />
+                        <TappablePhoto uri={prog.imageUrl} style={styles.proofThumb} caption="proof photo" />
                         <View style={styles.doneTag}>
                           <Ionicons name="checkmark-circle" size={16} color="#2e9e5b" />
                           <ThemedText type="small" style={{ color: '#2e9e5b' }}>

@@ -65,7 +65,9 @@ export default function ReportDiseaseScreen() {
   // Typed instead, when the report is raised without a farmer's crop list.
   const [cropName, setCropName] = useState('');
   const [seniors, setSeniors] = useState<{ _id: string; name: string; mobile: string }[]>([]);
-  const [sentToId, setSentToId] = useState<string | null>(null); // null = anyone
+  // Which senior is being asked. Null only until one is chosen — a report is
+  // no longer allowed to go out addressed to nobody in particular.
+  const [sentToId, setSentToId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -94,6 +96,9 @@ export default function ReportDiseaseScreen() {
   }, [noteFocused, keyboardHeight, revealNote]);
 
   useEffect(() => {
+    // Nothing is chosen for the agent, not even when only one senior exists.
+    // Who is being asked is their decision to make, and a pre-filled answer is
+    // one they can send without having read it.
     api.listSeniorAgronomists().then(setSeniors).catch(() => {});
   }, []);
 
@@ -128,6 +133,22 @@ export default function ReportDiseaseScreen() {
       setError('Take at least one photo of the affected crop.');
       return;
     }
+    /**
+     * A named senior is required.
+     *
+     * Sending to everyone looked faster but left the report owned by nobody:
+     * each senior could reasonably assume another was handling it, and there
+     * was no one to chase when nothing came back. Naming one makes the answer
+     * somebody's job.
+     */
+    if (!sentToId) {
+      setError(
+        seniors.length === 0
+          ? 'No senior agronomist has signed up yet, so there is nobody to send this to.'
+          : 'Choose which senior agronomist should answer this.'
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -157,7 +178,7 @@ export default function ReportDiseaseScreen() {
       const to = seniors.find((s) => s._id === sentToId);
       Alert.alert(
         'Sent ✓',
-        `${to ? `${to.name} has` : 'Every senior agronomist has'} been notified. You will get a notification when ${to ? 'they reply' : 'one replies'}.`,
+        `${to?.name ?? 'The senior agronomist'} has been notified. You will get a notification when they reply.`,
         [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (e: any) {
@@ -203,8 +224,8 @@ export default function ReportDiseaseScreen() {
             onContentSizeChange={() => noteFocused && revealNote()}
             keyboardShouldPersistTaps="handled">
             <ThemedText type="small" themeColor="textSecondary">
-              {params.farmerName ? `${params.farmerName}'s farm` : 'This farm'} · sent to every senior
-              agronomist
+              {params.farmerName ? `${params.farmerName}'s farm` : 'This farm'} · answered by the
+              senior agronomist you choose
             </ThemedText>
 
             {crops.length > 0 ? (
@@ -245,28 +266,27 @@ export default function ReportDiseaseScreen() {
               </>
             )}
 
-            {/* Who answers. "Anyone" reaches every senior — fastest, but nobody
-                owns it; naming one gives it an owner at the cost of waiting. */}
+            {/* Who answers. One named senior, always: see `send` for why the
+                old "any senior" broadcast was removed. */}
             <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
-              Send to
+              Send to <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
             </ThemedText>
             <View style={styles.chipWrap}>
-              <Pressable
-                onPress={() => setSentToId(null)}
-                style={[styles.chip, { backgroundColor: sentToId === null ? GREEN : theme.backgroundElement }]}>
-                <ThemedText
-                  type="small"
-                  style={{ color: sentToId === null ? '#fff' : theme.text, fontWeight: '600' }}>
-                  Any senior
-                </ThemedText>
-              </Pressable>
               {seniors.map((s) => {
                 const on = sentToId === s._id;
                 return (
                   <Pressable
                     key={s._id}
-                    onPress={() => setSentToId(on ? null : s._id)}
+                    // No toggle off. Tapping the chosen one again would leave
+                    // the report addressed to nobody, which is the state this
+                    // screen no longer has.
+                    onPress={() => setSentToId(s._id)}
                     style={[styles.chip, { backgroundColor: on ? GREEN : theme.backgroundElement }]}>
+                    <Ionicons
+                      name={on ? 'checkmark-circle' : 'person-circle-outline'}
+                      size={14}
+                      color={on ? '#fff' : theme.textSecondary}
+                    />
                     <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
                       {s.name}
                     </ThemedText>
@@ -275,8 +295,8 @@ export default function ReportDiseaseScreen() {
               })}
             </View>
             {seniors.length === 0 && (
-              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11, marginTop: Spacing.one }}>
-                No senior agronomists have signed up yet — this will wait until one does.
+              <ThemedText type="small" style={{ fontSize: 11, marginTop: Spacing.one, color: Brand.danger }}>
+                No senior agronomist has signed up yet, so there is nobody to send this to.
               </ThemedText>
             )}
 
@@ -325,14 +345,21 @@ export default function ReportDiseaseScreen() {
 
             {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
 
-            <Pressable onPress={send} disabled={saving} style={[styles.sendBtn, { opacity: saving ? 0.6 : 1 }]}>
+            <Pressable
+              onPress={send}
+              disabled={saving || !sentToId}
+              style={[styles.sendBtn, { opacity: saving || !sentToId ? 0.6 : 1 }]}>
               {saving ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
                   <Ionicons name="send" size={18} color="#fff" />
+                  {/* Named on the button, so it is clear who is about to be
+                      asked without scrolling back up to check. */}
                   <ThemedText type="smallBold" style={{ color: '#fff' }}>
-                    Ask senior agronomist
+                    {sentToId
+                      ? `Ask ${seniors.find((x) => x._id === sentToId)?.name ?? 'senior agronomist'}`
+                      : 'Choose a senior agronomist'}
                   </ThemedText>
                 </>
               )}
@@ -371,7 +398,14 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two },
   fieldLabel: { marginTop: Spacing.four },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
-  chip: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderRadius: Spacing.five },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.five,
+  },
   nameInput: {
     borderRadius: Spacing.two,
     paddingHorizontal: Spacing.three,

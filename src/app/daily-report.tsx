@@ -20,7 +20,8 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, DayStats } from '@/lib/api';
+import { DayWorkSheet } from '@/components/day-work-sheet';
+import { api, DayReport, DayStats } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -33,6 +34,29 @@ type Field = {
   multiline?: boolean;
   keyboardType?: 'default' | 'numeric';
 };
+
+/**
+ * How long the written report may run.
+ *
+ * Counted in words, not characters, because that is the limit an agent was
+ * given — and a character cap cuts a sentence off mid-word, which reads as the
+ * app losing what they typed rather than as a limit.
+ */
+const MAX_WORDS = 300;
+
+const countWords = (t: string) => (t.trim() ? t.trim().split(/\s+/).length : 0);
+
+/**
+ * Keep the first `MAX_WORDS` words and drop the rest.
+ *
+ * The trailing space is preserved when the text ends in one, so typing does
+ * not feel like it is fighting back on the word that takes you to the limit.
+ */
+function limitWords(t: string) {
+  const words = t.trim().split(/\s+/);
+  if (words.length <= MAX_WORDS) return t;
+  return words.slice(0, MAX_WORDS).join(' ');
+}
 
 const FIELDS: Field[] = [
   { key: 'dailyReport', label: 'Daily Report', placeholder: 'What did you do today?', icon: 'document-text-outline', multiline: true },
@@ -60,10 +84,15 @@ export default function DailyReportScreen() {
   // The measured half of the report: distance from the tracked route, farmers
   // from what was recorded. Shown so the agent sees what is being filed with it.
   const [stats, setStats] = useState<DayStats | null>(null);
+  /** The records behind the counts: who, their number, how much land. */
+  const [report, setReport] = useState<DayReport | null>(null);
+  const [dayOpen, setDayOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     api.getDayStats(user._id).then(setStats).catch(() => {});
+    // Detail is extra: its failure must not take the counts or the form with it.
+    api.getDayReport(user._id).then(setReport).catch(() => {});
   }, [user]);
 
   const set = (k: Field['key'], v: string) => setValues((prev) => ({ ...prev, [k]: v }));
@@ -141,16 +170,31 @@ export default function DailyReportScreen() {
             <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.two, marginTop: Spacing.three }}>
               These numbers are recorded automatically and sent with your report.
             </ThemedText>
-
             {FIELDS.map((f) => (
               <View key={f.key} style={{ marginTop: Spacing.three }}>
                 <View style={styles.labelRow}>
                   <Ionicons name={f.icon} size={16} color={GREEN} />
                   <ThemedText type="smallBold">{f.label}</ThemedText>
+                  {/* Only counted where there is a limit, and only once there
+                      is something to count — a "0/300" on an empty box reads
+                      as a demand rather than a guide. */}
+                  {f.key === 'dailyReport' && countWords(values[f.key]) > 0 ? (
+                    <ThemedText
+                      type="small"
+                      style={[
+                        styles.wordCount,
+                        {
+                          color:
+                            countWords(values[f.key]) >= MAX_WORDS ? Brand.danger : theme.textSecondary,
+                        },
+                      ]}>
+                      {countWords(values[f.key])}/{MAX_WORDS} words
+                    </ThemedText>
+                  ) : null}
                 </View>
                 <TextInput
                   value={values[f.key]}
-                  onChangeText={(t) => set(f.key, t)}
+                  onChangeText={(t) => set(f.key, f.key === 'dailyReport' ? limitWords(t) : t)}
                   placeholder={f.placeholder}
                   placeholderTextColor={theme.textSecondary}
                   multiline={f.multiline}
@@ -175,9 +219,44 @@ export default function DailyReportScreen() {
                 </ThemedText>
               )}
             </Pressable>
+
+            {/* Below Submit, at the very end of the page.
+                The counts near the top say how much was done; this says who,
+                and it is a place to look rather than something to fill in — so
+                it sits after the form instead of interrupting it on the way
+                down to the writing. */}
+            {report && (
+              <Pressable
+                onPress={() => setDayOpen(true)}
+                style={({ pressed }) => [styles.viewBtn, pressed && { opacity: 0.85 }]}>
+                <Ionicons name="list-outline" size={18} color={GREEN} />
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                    View my day in full
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                    {[
+                      `${report.onboarded.length} onboarded`,
+                      `${report.metExisting.length} existing met`,
+                      `${report.visits.length} visits`,
+                      `${report.sales.length} sales`,
+                    ].join(' · ')}
+                  </ThemedText>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={GREEN} />
+              </Pressable>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Over the form, not instead of it: the half-written report stays
+          visible behind, so opening this never feels like leaving it. */}
+      <DayWorkSheet
+        visible={dayOpen}
+        userId={user?._id}
+        onClose={() => setDayOpen(false)}
+      />
     </View>
   );
 }
@@ -193,6 +272,17 @@ const styles = StyleSheet.create({
   },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
+  viewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: GREEN,
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+    marginTop: Spacing.four,
+  },
   statCard: {
     flexGrow: 1,
     flexBasis: '30%',
@@ -201,6 +291,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
     borderRadius: Spacing.three,
   },
+  wordCount: { marginLeft: 'auto', fontSize: 11 },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.one },
   input: {
     borderRadius: Spacing.two,

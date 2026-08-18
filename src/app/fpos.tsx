@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -229,7 +230,7 @@ export default function FposScreen() {
         <ThemedView type="backgroundElement" style={styles.card}>
           <View style={styles.cardHead}>
             {f.photoUrl ? (
-              <Image source={{ uri: f.photoUrl }} style={styles.avatar} contentFit="cover" />
+              <TappablePhoto uri={f.photoUrl} style={styles.avatar} caption={f.name} />
             ) : (
               <View style={[styles.avatar, styles.avatarEmpty]}>
                 <Ionicons name="business" size={18} color={GREEN} />

@@ -128,6 +128,33 @@ export function AgronomistHome() {
       route: '/tracking',
     },
     {
+      key: 'calendar',
+      label: 'Calendar',
+      sub: 'Follow-ups & history',
+      icon: 'calendar',
+      tint: Brand.accent,
+      well: Brand.accentSurface,
+      route: '/calendar',
+    },
+    /**
+     * Seniors only. Spread away rather than rendered and hidden, so the tile
+     * does not exist at all for an ordinary agronomist — and the screen behind
+     * it checks the role again, since a hidden tile is not access control.
+     */
+    ...(senior
+      ? [
+          {
+            key: 'team',
+            label: 'Team',
+            sub: "Everyone's work today",
+            icon: 'people' as const,
+            tint: Brand.primary,
+            well: Brand.primarySurface,
+            route: '/team',
+          },
+        ]
+      : []),
+    {
       key: 'report',
       label: 'Daily Report',
       sub: 'End of day',

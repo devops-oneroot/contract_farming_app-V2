@@ -221,10 +221,6 @@ export default function VisitFarmerScreen() {
       setError('Please take at least one photo as proof of visit.');
       return;
     }
-    if (!followUp) {
-      setError('Please set the next follow-up date before marking this visit.');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
@@ -249,7 +245,11 @@ export default function VisitFarmerScreen() {
       posthog?.capture('farm_visit_logged', { hasFarmPhoto: !!farmPhoto, hasFarmerPhoto: !!farmerPhoto, hasLocation: !!coords });
       Alert.alert(
         'Visit marked ✓',
-        `${params.farmerName ?? 'Farmer'} marked as visited. They will appear in Follow up on ${fmtDay(followUp)}.`,
+        followUp
+          ? `${params.farmerName ?? 'Farmer'} marked as visited. They will appear in Follow up on ${fmtDay(followUp)}.`
+          // Said plainly, because leaving the date blank also CLEARS any
+          // follow-up this farmer was already carrying.
+          : `${params.farmerName ?? 'Farmer'} marked as visited. No follow-up is scheduled.`,
         [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (e: any) {
@@ -409,7 +409,7 @@ export default function VisitFarmerScreen() {
 
             {/* When to come back. Empty means nothing is owed. */}
             <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
-              Next follow-up <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
+              Next follow-up
             </ThemedText>
             <Pressable
               onPress={() => setShowFollowUpPicker(true)}
@@ -424,9 +424,17 @@ export default function VisitFarmerScreen() {
                 color={followUp ? GREEN : theme.textSecondary}
               />
               <ThemedText style={{ flex: 1, color: followUp ? theme.text : theme.textSecondary }}>
-                {followUp ? fmtDay(followUp) : 'Select the next visit date'}
+                {followUp ? fmtDay(followUp) : 'Optional — set a date to come back'}
               </ThemedText>
-              <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+              {/* Once a date is set there has to be a way back out of it, or
+                  "optional" only holds until the picker is opened by mistake. */}
+              {followUp ? (
+                <Pressable onPress={() => setFollowUp(null)} hitSlop={10}>
+                  <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+                </Pressable>
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+              )}
             </Pressable>
             {showFollowUpPicker && (
               <DateTimePicker
