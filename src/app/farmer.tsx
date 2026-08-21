@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -613,9 +614,27 @@ export default function FarmerScreen() {
                                 : ''}
                           </ThemedText>
                         </View>
-                        <ThemedText type="smallBold" style={{ color: GREEN }}>
-                          {money(s.total)}
-                        </ThemedText>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <ThemedText type="smallBold" style={{ color: GREEN }}>
+                            {money(s.total)}
+                          </ThemedText>
+                          {/* The bill for this one sale. Opened rather than
+                              fetched: the phone's browser downloads it and can
+                              then share it straight to the farmer. */}
+                          <Pressable
+                            onPress={() =>
+                              Linking.openURL(api.saleInvoicePdfUrl(s._id)).catch(() =>
+                                Alert.alert('Could not open', 'Please try again.')
+                              )
+                            }
+                            hitSlop={8}
+                            style={({ pressed }) => [styles.billBtn, pressed && { opacity: 0.7 }]}>
+                            <Ionicons name="download-outline" size={12} color={GREEN} />
+                            <ThemedText type="small" style={styles.billBtnText}>
+                              Bill
+                            </ThemedText>
+                          </Pressable>
+                        </View>
                       </View>
 
                       {/* Before at handover; after once the waiting period is up. */}
@@ -1090,6 +1109,20 @@ const styles = StyleSheet.create({
   geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2e9e5b', alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.four, borderRadius: Spacing.three, alignItems: 'center' },
   saleCard: { padding: Spacing.three, borderRadius: Spacing.three, marginBottom: Spacing.two },
+  /** Download this sale's bill, under its total where the money already is. */
+  billBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 4,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 3,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: `${GREEN}55`,
+    backgroundColor: Brand.primarySurface,
+  },
+  billBtnText: { color: GREEN, fontWeight: '700', fontSize: 11 },
   saleTop: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
   saleItem: { marginTop: Spacing.three },
   saleItemHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

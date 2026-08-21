@@ -24,6 +24,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { FilterPicker } from '@/components/filter-picker';
 import { Aggregator, api, DateRange, Farmer, onboarderId, onboarderName } from '@/lib/api';
+import { limitSearch } from '@/lib/mobile';
 import { callFarmer } from '@/lib/call';
 
 const GREEN = Brand.primary;
@@ -356,7 +357,7 @@ export default function OnboardedScreen() {
             <Ionicons name="search" size={16} color={theme.textSecondary} />
             <TextInput
               value={query}
-              onChangeText={setQuery}
+              onChangeText={(v) => setQuery(limitSearch(v))}
               placeholder="Search by name or number"
               placeholderTextColor={theme.textSecondary}
               autoCorrect={false}

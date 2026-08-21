@@ -1,6 +1,6 @@
 import { Image, ImageContentFit, ImageStyle } from 'expo-image';
 import { useMemo, useState } from 'react';
-import { Pressable, StyleProp } from 'react-native';
+import { Pressable, StyleProp, StyleSheet } from 'react-native';
 
 import { PhotoViewer } from '@/components/photo-viewer';
 
@@ -50,14 +50,35 @@ export function TappablePhoto({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const photos = useMemo(() => (group?.length ? group : [uri]), [key]);
 
+  /**
+   * The size goes on the Pressable as well as the image.
+   *
+   * Without it a photo styled `width: '100%'` vanishes: the wrapper shrinks to
+   * fit its content, while the content's width is a percentage OF the wrapper —
+   * so it resolves to nothing and the image is never drawn. Callers used to
+   * style a bare `<Image>`, where the parent supplied that width directly, and
+   * wrapping them in this component quietly broke every one of them that sized
+   * itself in percentages.
+   *
+   * Only the box matters here. Anything about how the image is painted —
+   * corners, background, fit — stays on the image itself.
+   */
+  const box = StyleSheet.flatten(style) as ImageStyle | undefined;
+
   return (
     <>
       <Pressable
         onPress={() => !disabled && setOpen(true)}
         disabled={disabled}
         accessibilityRole="imagebutton"
-        accessibilityLabel={caption ? `View ${caption}` : 'View photo'}>
-        <Image source={{ uri }} style={style} contentFit={contentFit} />
+        accessibilityLabel={caption ? `View ${caption}` : 'View photo'}
+        style={{
+          width: box?.width,
+          height: box?.height,
+          flex: box?.flex,
+          alignSelf: box?.alignSelf,
+        }}>
+        <Image source={{ uri }} style={[style, styles.fill]} contentFit={contentFit} />
       </Pressable>
 
       <PhotoViewer
@@ -68,3 +89,9 @@ export function TappablePhoto({
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  // The image fills the box the Pressable now holds, so a percentage width has
+  // a real parent to be a percentage of.
+  fill: { width: '100%', height: '100%' },
+});

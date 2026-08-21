@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   // Core Image, not expo-image: expo-image does not reliably paint a local
   // file:// preview straight off the camera, which left the slots blank.
   Image as RNImage,
@@ -42,7 +43,19 @@ type Step = 'pick' | 'confirm';
  * and each product carries its own before-photo of the crop. The matching
  * after-photo is taken on a follow-up visit a week later, from the farmer's page.
  */
-type Line = { qty: number; price: string; before: string | null };
+type Line = {
+  qty: number;
+  price: string;
+  /**
+   * A discount on this product, as typed. Kept as a string so the field can be
+   * empty while being edited rather than snapping to 0 on every keystroke.
+   */
+  discount: string;
+  discountType: DiscountType;
+  before: string | null;
+};
+
+type DiscountType = 'rs' | 'pct';
 
 const money = (n: number) =>
   `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -67,6 +80,25 @@ function gstSplit(total: number) {
   const taxable = round(total / (1 + GST_RATE));
   const cgst = round(taxable * HALF_GST);
   return { taxable, cgst, sgst: round(total - taxable - cgst) };
+}
+
+/**
+ * What one line comes to, discount included.
+ *
+ * Capped at the line: a discount bigger than the product being sold would make
+ * the line negative and quietly take money off the rest of the basket. The
+ * server caps it the same way and recomputes from scratch, so this is what the
+ * agronomist sees rather than what anyone is charged on.
+ */
+function lineMath(line: Line) {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const gross = round(line.qty * (Number(line.price) || 0));
+  const entered = Math.max(0, Number(line.discount) || 0);
+  const off = Math.min(
+    gross,
+    round(line.discountType === 'pct' ? (gross * Math.min(entered, 100)) / 100 : entered)
+  );
+  return { gross, off, net: round(gross - off) };
 }
 
 /** Rough, and deliberately so: "3 months ago" is what an agent needs, not a date. */
@@ -128,6 +160,13 @@ export default function GiveProductScreen() {
   const [notes, setNotes] = useState('');
   // Which product we are photographing.
   const [cameraFor, setCameraFor] = useState<string | null>(null);
+  /**
+   * A discount on the basket as a whole. Kept apart from the per-product ones
+   * because it is agreed as one thing — "call it two thousand" — and splitting
+   * it across the products would invent per-product prices nobody said.
+   */
+  const [saleDiscount, setSaleDiscount] = useState('');
+  const [saleDiscountType, setSaleDiscountType] = useState<DiscountType>('rs');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const confirmScrollRef = useRef<ScrollView>(null);
@@ -229,7 +268,38 @@ export default function GiveProductScreen() {
 
   const inCart = products.filter((p) => cart[p._id]);
   const itemCount = inCart.reduce((s, p) => s + cart[p._id].qty, 0);
-  const total = inCart.reduce((s, p) => s + cart[p._id].qty * (Number(cart[p._id].price) || 0), 0);
+  /**
+   * What the basket comes to once every per-product discount is off, and then
+   * what is left after the discount on the basket as a whole.
+   *
+   * The overall one is taken LAST, so a percentage means a percentage of what
+   * is actually still owed. Applying it first would make the same "10% off"
+   * quietly worth more here than it is on a product, and the two discounts
+   * would compound differently depending on which was typed first. The server
+   * recomputes in exactly this order.
+   */
+  const subtotal = inCart.reduce((s, p) => s + lineMath(cart[p._id]).net, 0);
+  const saleOff = useMemo(() => {
+    const round = (n: number) => Math.round(n * 100) / 100;
+    const entered = Math.max(0, Number(saleDiscount) || 0);
+    return Math.min(
+      subtotal,
+      round(saleDiscountType === 'pct' ? (subtotal * Math.min(entered, 100)) / 100 : entered)
+    );
+  }, [subtotal, saleDiscount, saleDiscountType]);
+  const total = Math.round((subtotal - saleOff) * 100) / 100;
+  /**
+   * The bill stated the way a GST invoice states it: every line ex-tax, the tax
+   * added once at the bottom, and the last figure still the price agreed out
+   * loud.
+   *
+   * `saleOffEx` is derived as the GAP between the two taxable figures rather
+   * than by dividing the discount by 1.05 on its own. Both routes give the same
+   * answer to the paisa in almost every case, but only this one guarantees that
+   * Subtotal − Discount lands exactly on Taxable Value, with no rounding crumb
+   * left visible on the screen.
+   */
+  const subtotalEx = useMemo(() => gstSplit(subtotal).taxable, [subtotal]);
 
   /**
    * The price on a product is what the farmer pays, tax included — it is the
@@ -245,9 +315,13 @@ export default function GiveProductScreen() {
    *   taxable + CGST + SGST = total, to the paisa
    */
   const tax = useMemo(() => gstSplit(total), [total]);
+  const saleOffEx = Math.round((subtotalEx - tax.taxable) * 100) / 100;
 
   const add = (p: Product) =>
-    setCart((c) => ({ ...c, [p._id]: { qty: 1, price: String(p.price ?? 0), before: null } }));
+    setCart((c) => ({
+      ...c,
+      [p._id]: { qty: 1, price: String(p.price ?? 0), discount: '', discountType: 'rs', before: null },
+    }));
 
   const setQty = (p: Product, qty: number) =>
     setCart((c) => {
@@ -258,8 +332,16 @@ export default function GiveProductScreen() {
       return { ...c, [p._id]: { ...c[p._id], qty } };
     });
 
-  const setPrice = (id: string, price: string) =>
-    setCart((c) => ({ ...c, [id]: { ...c[id], price } }));
+  const setDiscount = (id: string, discount: string) =>
+    setCart((c) => ({ ...c, [id]: { ...c[id], discount } }));
+
+  /**
+   * Switching between rupees and percent keeps the number typed. Clearing it
+   * would be safer arithmetically but reads as the app throwing the entry away,
+   * and the figure is re-checked against the line either way.
+   */
+  const setDiscountType = (id: string, discountType: DiscountType) =>
+    setCart((c) => ({ ...c, [id]: { ...c[id], discountType } }));
 
   /**
    * Store the camera's own URI and show it immediately. Resizing happens at
@@ -301,14 +383,18 @@ export default function GiveProductScreen() {
           productId: p._id,
           qty: cart[p._id].qty,
           unitPrice: Number(cart[p._id].price) || 0,
+          discount: Math.max(0, Number(cart[p._id].discount) || 0),
+          discountType: cart[p._id].discountType,
           beforePhoto: { uri: await shrink(cart[p._id].before!), name: `before_${i}.jpg`, type: 'image/jpeg' },
         }))
       );
-      await api.createProductSale({
+      const saved = await api.createProductSale({
         agronomistId: user._id,
         farmerId,
         cropId,
         items,
+        discount: Math.max(0, Number(saleDiscount) || 0),
+        discountType: saleDiscountType,
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
@@ -320,8 +406,18 @@ export default function GiveProductScreen() {
         total,
         has_location: !!coords,
       });
+      // Offered here because this is the moment the farmer is still standing
+      // there — the bill is also on their page afterwards, but handing it over
+      // now is what it is for.
       Alert.alert('Sale recorded ✓', `${inCart.length} product(s) · ${money(total)}`, [
-        { text: 'OK', onPress: () => router.back() },
+        {
+          text: 'Download bill',
+          onPress: () => {
+            Linking.openURL(api.saleInvoicePdfUrl(saved._id)).catch(() => {});
+            router.back();
+          },
+        },
+        { text: 'Done', onPress: () => router.back() },
       ]);
     } catch (e: any) {
       setError(e?.message || 'Could not record the sale.');
@@ -424,13 +520,18 @@ export default function GiveProductScreen() {
                             key={g.id}
                             style={[styles.pastCard, { backgroundColor: theme.backgroundElement }]}>
                             <View style={styles.pastTop}>
-                              {g.imageUrl ? (
-                                <TappablePhoto uri={g.imageUrl} style={styles.pastImg} caption={g.name} />
-                              ) : (
-                                <View style={[styles.pastImg, styles.pastImgEmpty]}>
+                              <View style={[styles.pastImg, { backgroundColor: theme.background }]}>
+                                {g.imageUrl ? (
+                                  <TappablePhoto
+                                    uri={g.imageUrl}
+                                    caption={g.name}
+                                    style={styles.pastImgInner}
+                                    contentFit="contain"
+                                  />
+                                ) : (
                                   <Ionicons name="cube-outline" size={16} color={theme.textSecondary} />
-                                </View>
-                              )}
+                                )}
+                              </View>
                               {/* Four times means something the one-off count cannot say. */}
                               {g.times > 1 && (
                                 <View style={styles.pastTimes}>
@@ -482,13 +583,25 @@ export default function GiveProductScreen() {
                         <View
                           key={p._id}
                           style={[styles.card, { width: cardW, backgroundColor: theme.backgroundElement }]}>
-                          {p.imageUrl ? (
-                            <Image source={{ uri: p.imageUrl }} style={styles.cardImg} contentFit="cover" />
-                          ) : (
-                            <View style={[styles.cardImg, styles.cardImgFallback]}>
-                              <Ionicons name="cube-outline" size={28} color={GREEN} />
-                            </View>
-                          )}
+                          {/* `contain` on a plain well, not `cover`.
+                              A product photo is a bag or a bottle shot square
+                              on, so cropping it to fill the box cut the top and
+                              bottom off the very thing being chosen — the
+                              label. Fitting it whole means some cards show a
+                              band of background, which is the right trade when
+                              the picture is what the agronomist is reading. */}
+                          <View style={[styles.cardImgWrap, { backgroundColor: theme.background }]}>
+                            {p.imageUrl ? (
+                              <TappablePhoto
+                                uri={p.imageUrl}
+                                caption={p.name}
+                                style={styles.cardImg}
+                                contentFit="contain"
+                              />
+                            ) : (
+                              <Ionicons name="cube-outline" size={30} color={GREEN} />
+                            )}
+                          </View>
                           <ThemedText type="smallBold" numberOfLines={2} style={styles.cardName}>
                             {p.name}
                           </ThemedText>
@@ -568,98 +681,335 @@ export default function GiveProductScreen() {
                 </ThemedText>
               </View>
 
-              {inCart.map((p) => {
+              {inCart.map((p, i) => {
                 const line = cart[p._id];
                 const done = !!line.before;
+                const math = lineMath(line);
                 return (
-                  <View key={p._id} style={[styles.lineCard, { backgroundColor: theme.backgroundElement }]}>
-                    <View style={styles.lineRow}>
-                      {p.imageUrl ? (
-                        <Image source={{ uri: p.imageUrl }} style={styles.lineImg} contentFit="cover" />
-                      ) : (
-                        <View style={[styles.lineImg, styles.cardImgFallback]}>
-                          <Ionicons name="cube-outline" size={18} color={GREEN} />
-                        </View>
-                      )}
-                      <View style={{ flex: 1 }}>
-                        <View style={styles.lineTitle}>
-                          <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
-                            {p.name}
-                          </ThemedText>
-                          <Ionicons
-                            name={done ? 'checkmark-circle' : 'alert-circle-outline'}
-                            size={18}
-                            color={done ? GREEN : Brand.accent}
+                  <View key={p._id} style={[styles.itemCard, { borderColor: theme.backgroundElement }]}>
+                    {/* Head: the numbered badge, the pack shot, and what this
+                        line is. Numbering matters on an invoice — it is how a
+                        farmer and an agent refer to a line out loud. */}
+                    <View style={styles.itemHead}>
+                      <View style={styles.itemIndex}>
+                        <ThemedText style={styles.itemIndexText}>{i + 1}</ThemedText>
+                      </View>
+                      <View style={[styles.itemImg, { backgroundColor: theme.background }]}>
+                        {p.imageUrl ? (
+                          <Image
+                            source={{ uri: p.imageUrl }}
+                            style={styles.fillImg}
+                            contentFit="contain"
                           />
-                        </View>
-                        <View style={styles.lineControls}>
-                          <View style={[styles.stepper, { borderColor: GREEN }]}>
-                            <Pressable onPress={() => setQty(p, line.qty - 1)} hitSlop={6} style={styles.stepBtn}>
-                              <Ionicons name="remove" size={16} color={GREEN} />
-                            </Pressable>
-                            <ThemedText type="smallBold" style={{ color: GREEN, minWidth: 18, textAlign: 'center' }}>
-                              {line.qty}
-                            </ThemedText>
-                            <Pressable onPress={() => setQty(p, line.qty + 1)} hitSlop={6} style={styles.stepBtn}>
-                              <Ionicons name="add" size={16} color={GREEN} />
-                            </Pressable>
-                          </View>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            ×
+                        ) : (
+                          <Ionicons name="cube-outline" size={20} color={GREEN} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <ThemedText type="smallBold" numberOfLines={2}>
+                          {p.name}
+                        </ThemedText>
+                        {p.unit ? (
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.itemUnit}>
+                            {p.unit}
                           </ThemedText>
-                          <TextInput
-                            value={line.price}
-                            onChangeText={(v) => setPrice(p._id, v)}
-                            keyboardType="decimal-pad"
-                            style={[styles.priceInput, { color: theme.text, backgroundColor: theme.background }]}
-                          />
-                          {/* The taxable value, not the price typed beside it.
-                              Lines are ex-tax and the tax is added once at the
-                              bottom, the way a GST invoice reads — so this
-                              figure will not equal qty x price, and the
-                              summary below is where they meet again. */}
-                          <ThemedText type="smallBold" style={{ marginLeft: 'auto' }}>
-                            {money(gstSplit(line.qty * (Number(line.price) || 0)).taxable)}
+                        ) : null}
+                      </View>
+                      <Ionicons
+                        name={done ? 'checkmark-circle' : 'alert-circle-outline'}
+                        size={20}
+                        color={done ? GREEN : Brand.accent}
+                      />
+                    </View>
+
+                    {/* Qty, Rate, Amount — the three columns of an invoice line,
+                        read left to right. Quantity keeps its stepper because
+                        it is the one figure still being decided here. */}
+                    <View style={styles.qrarow}>
+                      <View style={styles.qraCell}>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
+                          Qty
+                        </ThemedText>
+                        <View style={[styles.stepper, { borderColor: GREEN }]}>
+                          <Pressable onPress={() => setQty(p, line.qty - 1)} hitSlop={6} style={styles.stepBtn}>
+                            <Ionicons name="remove" size={15} color={GREEN} />
+                          </Pressable>
+                          <ThemedText type="smallBold" style={styles.stepValue}>
+                            {line.qty}
                           </ThemedText>
+                          <Pressable onPress={() => setQty(p, line.qty + 1)} hitSlop={6} style={styles.stepBtn}>
+                            <Ionicons name="add" size={15} color={GREEN} />
+                          </Pressable>
                         </View>
+                      </View>
+                      <View style={styles.qraCell}>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
+                          Rate
+                        </ThemedText>
+                        {/* The catalog price, shown not typed. It used to be an
+                            input, which meant the price a farmer was charged
+                            could differ from the price the company set without
+                            anyone noticing — charging less is now a discount,
+                            and it is recorded as one. */}
+                        <ThemedText type="smallBold" style={styles.qraValue}>
+                          {money(Number(line.price) || 0)}
+                        </ThemedText>
+                      </View>
+                      <View style={[styles.qraCell, { alignItems: 'flex-end' }]}>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
+                          Amount
+                        </ThemedText>
+                        {/* The rate is what the farmer pays, tax inside it, so
+                            this column is qty x rate with the 2.5% CGST and
+                            2.5% SGST taken back out — the way a GST invoice
+                            states a line, with the tax added once at the
+                            bottom. It therefore will NOT equal qty x rate. */}
+                        <ThemedText type="smallBold" style={styles.qraValue}>
+                          {money(gstSplit(math.gross).taxable)}
+                        </ThemedText>
                       </View>
                     </View>
 
+                    {/* Line discount, in its own tinted panel the way the
+                        invoice lays it out: the toggle picks how it is entered,
+                        the left box takes the figure, and the right box shows
+                        what it works out to. */}
+                    <View style={styles.discPanel}>
+                      <View style={styles.discHead}>
+                        <Ionicons name="pricetag" size={14} color={Brand.danger} />
+                        <ThemedText type="smallBold" style={styles.discTitle}>
+                          Line Discount
+                        </ThemedText>
+                        <View style={styles.discToggle}>
+                          {(['pct', 'rs'] as DiscountType[]).map((t) => {
+                            const on = line.discountType === t;
+                            return (
+                              <Pressable
+                                key={t}
+                                onPress={() => setDiscountType(p._id, t)}
+                                hitSlop={6}
+                                style={({ pressed }) => [
+                                  styles.discToggleBtn,
+                                  on && { backgroundColor: GREEN },
+                                  pressed && { opacity: 0.8 },
+                                ]}>
+                                <ThemedText
+                                  style={[
+                                    styles.discToggleText,
+                                    { color: on ? '#fff' : theme.textSecondary },
+                                  ]}>
+                                  {t === 'pct' ? '%' : '₹'}
+                                </ThemedText>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      <View style={styles.discFields}>
+                        <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                            {line.discountType === 'pct' ? 'Discount (%)' : 'Discount (₹)'}
+                          </ThemedText>
+                          <TextInput
+                            value={line.discount}
+                            onChangeText={(v) => setDiscount(p._id, v)}
+                            keyboardType="decimal-pad"
+                            placeholder="0"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.discFieldInput, { color: theme.text }]}
+                          />
+                        </View>
+                        {/* Shown, not typed. One figure is the agreement and
+                            the other is its consequence — letting both be
+                            edited would need a rule for which wins, and this
+                            screen has no reason to invent one. */}
+                        <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                            Discount Amount
+                          </ThemedText>
+                          <ThemedText style={styles.discFieldValue}>{money(math.off)}</ThemedText>
+                        </View>
+                      </View>
+
+                      {math.off > 0 ? (
+                        <ThemedText style={styles.discOff}>− {money(math.off)}</ThemedText>
+                      ) : null}
+                    </View>
+
+                    {/* What this line comes to once its discount is off. */}
+                    <View style={styles.netBand}>
+                      <ThemedText type="smallBold" style={styles.netLabel}>
+                        Net Amount
+                      </ThemedText>
+                      <ThemedText type="smallBold" style={styles.netValue}>
+                        {money(gstSplit(math.net).taxable)}
+                      </ThemedText>
+                    </View>
+
+                    {/* The proof photo stays on the line it belongs to. The
+                        invoice this is modelled on has no such thing, but a
+                        sale here is not recorded until the crop is
+                        photographed — dropping it would remove the one part of
+                        this screen that is evidence rather than arithmetic. */}
                     <View style={styles.photoRow}>{photoSlot(p._id, line.before)}</View>
                   </View>
                 );
               })}
 
-              {/* The tax taken out of the agreed price, then added back — so
-                  the farmer can see what they are paying tax on, and the last
-                  line is still the number they were quoted. */}
-              <View style={[styles.taxBox, { backgroundColor: theme.backgroundElement }]}>
-                {[
-                  { label: 'Taxable value', value: tax.taxable },
-                  { label: 'CGST 2.5%', value: tax.cgst },
-                  { label: 'SGST 2.5%', value: tax.sgst },
-                ].map((r) => (
-                  <View key={r.label} style={styles.taxRow}>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {r.label}
+              {/* Straight after the last product, before the bill starts.
+                  Adding to the basket is part of building the list of items;
+                  by the time the eye reaches the totals, the basket is settled
+                  and this was only something to scroll past. */}
+              <Pressable
+                onPress={() => setStep('pick')}
+                style={({ pressed }) => [styles.addMoreBtn, pressed && { opacity: 0.85 }]}>
+                <Ionicons name="add-circle-outline" size={18} color={GREEN} />
+                <ThemedText type="smallBold" style={{ color: GREEN }}>
+                  Add more products
+                </ThemedText>
+              </Pressable>
+
+              {/* The bill, laid out the way an invoice reads: what the items
+                  come to, what came off, what is taxable, the tax itself, and
+                  the one figure the farmer actually pays. */}
+              <View style={[styles.billCard, { borderColor: theme.backgroundElement }]}>
+                <View style={styles.billRow}>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Subtotal
+                  </ThemedText>
+                  <ThemedText type="smallBold">{money(subtotalEx)}</ThemedText>
+                </View>
+
+                {/* The discount on the basket as a whole. Last of the two, so a
+                    percentage here means a percentage of what is still owed
+                    rather than of the list price. */}
+                <View style={styles.discPanel}>
+                  <View style={styles.discHead}>
+                    <Ionicons name="pricetag" size={14} color={Brand.danger} />
+                    <ThemedText type="smallBold" style={styles.discTitle}>
+                      Overall Discount
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {money(r.value)}
+                    <View style={styles.discToggle}>
+                      {(['pct', 'rs'] as DiscountType[]).map((t) => {
+                        const on = saleDiscountType === t;
+                        return (
+                          <Pressable
+                            key={t}
+                            onPress={() => setSaleDiscountType(t)}
+                            hitSlop={6}
+                            style={({ pressed }) => [
+                              styles.discToggleBtn,
+                              on && { backgroundColor: GREEN },
+                              pressed && { opacity: 0.8 },
+                            ]}>
+                            <ThemedText
+                              style={[
+                                styles.discToggleText,
+                                { color: on ? '#fff' : theme.textSecondary },
+                              ]}>
+                              {t === 'pct' ? '%' : '₹'}
+                            </ThemedText>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View style={styles.discFields}>
+                    <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                        {saleDiscountType === 'pct' ? 'Discount (%)' : 'Discount (₹)'}
+                      </ThemedText>
+                      <TextInput
+                        value={saleDiscount}
+                        onChangeText={setSaleDiscount}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.discFieldInput, { color: theme.text }]}
+                      />
+                    </View>
+                    <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                        Discount Amount
+                      </ThemedText>
+                      <ThemedText style={[styles.discFieldValue, styles.discOff]}>
+                        {saleOffEx > 0 ? `− ${money(saleOffEx)}` : money(0)}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.billRow}>
+                  <ThemedText type="smallBold">Taxable Value</ThemedText>
+                  <ThemedText type="smallBold">{money(tax.taxable)}</ThemedText>
+                </View>
+
+                {/* GST spelled out as a table, because that is how it appears
+                    on the bill the farmer is used to being handed. */}
+                <View style={[styles.gstBox, { backgroundColor: theme.background }]}>
+                  <View style={styles.gstHead}>
+                    <Ionicons name="document-text-outline" size={13} color={GREEN} />
+                    <ThemedText type="smallBold" style={{ color: GREEN, fontSize: 12 }}>
+                      GST Details
                     </ThemedText>
                   </View>
-                ))}
-
-                <View style={[styles.taxRule, { borderTopColor: theme.textSecondary }]} />
-
-                <View style={styles.taxRow}>
-                  <ThemedText type="smallBold">Total</ThemedText>
-                  <ThemedText type="smallBold" style={{ fontSize: 18, color: GREEN }}>
-                    {money(total)}
-                  </ThemedText>
+                  <View style={styles.gstRow}>
+                    {['Tax Type', 'Rate', 'Taxable Value', 'Tax Amount'].map((h, i) => (
+                      <ThemedText
+                        key={h}
+                        type="small"
+                        themeColor="textSecondary"
+                        style={[styles.gstCell, i > 1 && styles.gstCellRight, styles.gstHeadCell]}>
+                        {h}
+                      </ThemedText>
+                    ))}
+                  </View>
+                  {[
+                    { type: 'CGST', amount: tax.cgst },
+                    { type: 'SGST', amount: tax.sgst },
+                  ].map((r) => (
+                    <View key={r.type} style={styles.gstRow}>
+                      <ThemedText type="small" style={styles.gstCell}>
+                        {r.type}
+                      </ThemedText>
+                      <ThemedText type="small" style={styles.gstCell}>
+                        2.5%
+                      </ThemedText>
+                      <ThemedText type="small" style={[styles.gstCell, styles.gstCellRight]}>
+                        {money(tax.taxable)}
+                      </ThemedText>
+                      <ThemedText type="small" style={[styles.gstCell, styles.gstCellRight]}>
+                        {money(r.amount)}
+                      </ThemedText>
+                    </View>
+                  ))}
+                  <View style={[styles.gstRow, styles.gstTotalRow]}>
+                    <ThemedText type="smallBold" style={[styles.gstCell, { flex: 3 }]}>
+                      Total GST
+                    </ThemedText>
+                    <ThemedText type="smallBold" style={[styles.gstCell, styles.gstCellRight, { color: GREEN }]}>
+                      {money(Math.round((tax.cgst + tax.sgst) * 100) / 100)}
+                    </ThemedText>
+                  </View>
                 </View>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.taxNote}>
-                  Prices include 5% GST.
-                </ThemedText>
+
+                {/* The number that was agreed out loud, last and largest. */}
+                <View style={styles.payableBand}>
+                  <View style={{ flex: 1 }}>
+                    <ThemedText type="small" style={styles.payableLabel}>
+                      Total Payable
+                    </ThemedText>
+                    <ThemedText style={styles.payableValue}>{money(total)}</ThemedText>
+                  </View>
+                  <View style={styles.payablePill}>
+                    <Ionicons name="pricetags-outline" size={13} color={GREEN} />
+                    <ThemedText type="small" style={styles.payablePillText}>
+                      Inclusive of GST
+                    </ThemedText>
+                  </View>
+                </View>
               </View>
 
               {/* The other half of the proof comes later, so say so plainly. */}
@@ -697,12 +1047,6 @@ export default function GiveProductScreen() {
                 )}
               </Pressable>
 
-              <Pressable onPress={() => setStep('pick')} style={styles.addMoreBtn}>
-                <Ionicons name="add" size={18} color={GREEN} />
-                <ThemedText type="smallBold" style={{ color: GREEN }}>
-                  Add more products
-                </ThemedText>
-              </Pressable>
             </ScrollView>
           )}
         </KeyboardAvoidingView>
@@ -714,10 +1058,6 @@ export default function GiveProductScreen() {
 }
 
 const styles = StyleSheet.create({
-  taxBox: { borderRadius: Spacing.three, padding: Spacing.three, marginTop: Spacing.three },
-  taxRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  taxRule: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: Spacing.two, opacity: 0.4 },
-  taxNote: { fontSize: 11, marginTop: Spacing.one },
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row',
@@ -726,6 +1066,139 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
   },
+  // ----- Confirm step, laid out as an invoice -----
+  /** One item, as a bordered card rather than a tinted block. */
+  itemCard: {
+    backgroundColor: '#fff',
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    padding: Spacing.three,
+    marginBottom: Spacing.three,
+    gap: Spacing.three,
+  },
+  itemHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  /** The line number, so a line can be referred to out loud. */
+  itemIndex: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemIndexText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  itemImg: {
+    width: 46,
+    height: 46,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  fillImg: { width: '100%', height: '100%' },
+  itemUnit: { fontSize: 11 },
+  /** Qty / Rate / Amount — the three columns an invoice line is read in. */
+  qrarow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two },
+  qraCell: { flex: 1, gap: 3 },
+  qraLabel: { fontSize: 11 },
+  qraValue: { fontSize: 15 },
+  stepValue: { color: GREEN, minWidth: 20, textAlign: 'center' },
+  /** The discount panel, tinted so it reads as an adjustment to the line. */
+  discPanel: {
+    backgroundColor: Brand.dangerSurface,
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+    gap: Spacing.two,
+  },
+  discHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  discTitle: { color: Brand.danger, flex: 1, fontSize: 13 },
+  discToggle: {
+    flexDirection: 'row',
+    borderRadius: Spacing.four,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(127,127,127,0.15)',
+    padding: 2,
+  },
+  /**
+   * 40x30 each. Small enough to sit on the panel header, large enough to hit
+   * outdoors one-handed — the two options being close together is what turns a
+   * fifty-rupee discount into fifty percent.
+   */
+  discToggleBtn: {
+    width: 40,
+    height: 30,
+    borderRadius: Spacing.four,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  discToggleText: { fontSize: 15, fontWeight: '800' },
+  discFields: { flexDirection: 'row', gap: Spacing.two },
+  discField: {
+    flex: 1,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    gap: 2,
+  },
+  discFieldLabel: { fontSize: 10 },
+  discFieldInput: { fontSize: 16, padding: 0, height: 24 },
+  discFieldValue: { fontSize: 16, height: 24, fontWeight: '700' },
+  /** The deduction, said once more in the discount panel's own colour. */
+  discOff: { color: Brand.danger, fontWeight: '800', textAlign: 'right' },
+  /** What this line comes to, on its own green band. */
+  netBand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Brand.primarySurface,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  netLabel: { color: GREEN },
+  netValue: { color: GREEN, fontSize: 16 },
+  // ----- The bill -----
+  billCard: {
+    backgroundColor: '#fff',
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    padding: Spacing.three,
+    marginTop: Spacing.two,
+    gap: Spacing.three,
+  },
+  billRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  gstBox: { borderRadius: Spacing.two, padding: Spacing.two, gap: 4 },
+  gstHead: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
+  gstRow: { flexDirection: 'row', alignItems: 'center' },
+  gstCell: { flex: 1, fontSize: 11 },
+  gstCellRight: { textAlign: 'right' },
+  gstHeadCell: { fontSize: 10, textTransform: 'uppercase' },
+  gstTotalRow: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(127,127,127,0.4)',
+    paddingTop: 5,
+    marginTop: 2,
+  },
+  payableBand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: Brand.primarySurface,
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+  },
+  payableLabel: { color: GREEN, fontWeight: '700' },
+  payableValue: { color: GREEN, fontSize: 24, fontWeight: '800' },
+  payablePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff',
+    borderRadius: Spacing.four,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+  },
+  payablePillText: { color: GREEN, fontWeight: '700', fontSize: 11 },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   fieldLabel: { marginTop: Spacing.three },
   input: {
@@ -749,8 +1222,15 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: Spacing.three, fontSize: 15 },
   pastCard: { width: 108, borderRadius: Spacing.three, padding: Spacing.two },
   pastTop: { alignItems: 'center' },
-  pastImg: { width: '100%', height: 56, borderRadius: Spacing.two, backgroundColor: '#d8d8d8' },
-  pastImgEmpty: { alignItems: 'center', justifyContent: 'center' },
+  pastImg: {
+    width: '100%',
+    height: 56,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  pastImgInner: { width: '100%', height: '100%' },
   pastTimes: {
     position: 'absolute',
     top: 3,
@@ -769,8 +1249,18 @@ const styles = StyleSheet.create({
     marginTop: Spacing.three,
   },
   card: { borderRadius: Spacing.three, padding: Spacing.two, gap: 2 },
-  cardImg: { width: '100%', height: 96, borderRadius: Spacing.two, marginBottom: Spacing.one },
-  cardImgFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: Brand.primarySurface },
+  /** The photo's own well: taller than before, and a neutral ground so a
+   *  product shot on white does not float on the card's tint. */
+  cardImgWrap: {
+    width: '100%',
+    height: 118,
+    borderRadius: Spacing.two,
+    marginBottom: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  cardImg: { width: '100%', height: '100%' },
   cardName: { fontSize: 13, lineHeight: 17 },
   cardBottom: {
     flexDirection: 'row',
@@ -806,27 +1296,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: Spacing.one,
-  },
-  lineCard: { padding: Spacing.three, borderRadius: Spacing.three, marginTop: Spacing.two },
-  lineRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  lineTitle: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  lineImg: { width: 44, height: 44, borderRadius: Spacing.two },
-  lineControls: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: Spacing.one },
-  priceInput: {
-    borderRadius: Spacing.two,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    fontSize: 14,
-    minWidth: 64,
-    textAlign: 'center',
-  },
-  totalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: Spacing.three,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.three,
   },
   followUp: {
     flexDirection: 'row',
@@ -874,12 +1343,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: Spacing.five,
   },
+  /** Sits between the last item and the bill, dashed so it reads as a slot
+   *  waiting to be filled rather than another product already in the basket. */
   addMoreBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.one,
+    gap: Spacing.two,
     paddingVertical: Spacing.three,
-    marginTop: Spacing.two,
+    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: `${GREEN}66`,
+    backgroundColor: Brand.primarySurface,
   },
 });

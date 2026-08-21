@@ -26,7 +26,8 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, FarmingType, Fpo, VISIT_SOURCES, VisitSource } from '@/lib/api';
+import { api, CatalogCrop, Farmer, FarmingType, Fpo, VISIT_SOURCES, VisitSource } from '@/lib/api';
+import { asMobile, digitsOf, MOBILE_DIGITS } from '@/lib/mobile';
 import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
 import { CameraCapture } from '@/components/camera-capture';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -87,12 +88,54 @@ export default function OnboardFarmerScreen() {
 
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  /**
+   * The farmer already on this number, once ten digits have been typed.
+   *
+   * Onboarding a number that exists does not fail — the server links that
+   * farmer to this agronomist and keeps their crops and history. That is
+   * usually what was wanted, but only if the agent knows it is what is about to
+   * happen, so it is said before they save rather than after.
+   */
+  const [existing, setExisting] = useState<Farmer | null>(null);
+  const [checking, setChecking] = useState(false);
   /** How this farmer reached us. Null until one is picked, and it stays optional. */
   const [referredBy, setReferredBy] = useState<VisitSource | null>(null);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
   const [crops, setCrops] = useState<DraftCrop[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Look the number up as soon as it is complete.
+   *
+   * Debounced, because a ten-digit number passes through nine incomplete states
+   * on the way in and none of them is worth a request. The match is confirmed
+   * on the digits rather than trusted from the search: the server's search also
+   * looks at names and addresses, and a village whose name contains those digits
+   * would otherwise be reported as a duplicate farmer.
+   */
+  useEffect(() => {
+    const digits = digitsOf(mobile);
+    if (digits.length !== MOBILE_DIGITS) {
+      setExisting(null);
+      setChecking(false);
+      return;
+    }
+    setChecking(true);
+    const t = setTimeout(async () => {
+      try {
+        const found = await api.listAllFarmers({ search: digits });
+        setExisting(found.find((f) => digitsOf(f.mobile) === digits) ?? null);
+      } catch {
+        // A failed check must never block onboarding — the server checks again
+        // on save, and that is the one that decides.
+        setExisting(null);
+      } finally {
+        setChecking(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [mobile]);
 
   // The crop sheet — one crop at a time, so each gets its own area and dates.
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -463,12 +506,58 @@ export default function OnboardFarmerScreen() {
             </ThemedText>
             <TextInput
               value={mobile}
-              onChangeText={setMobile}
+              onChangeText={(v) => setMobile(asMobile(v))}
               keyboardType="phone-pad"
+              maxLength={MOBILE_DIGITS}
               placeholder="10-digit mobile"
               placeholderTextColor={theme.textSecondary}
               style={inputStyle}
             />
+
+            {/* Who is already on this number. Not an error: saving will link
+                that farmer to this agronomist, with their crops and history
+                intact. It only has to be said before it happens. */}
+            {checking ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.checkLine}>
+                Checking this number…
+              </ThemedText>
+            ) : existing ? (
+              <View style={styles.dupBox}>
+                <Ionicons name="person-circle" size={20} color={Brand.accent} />
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="smallBold" style={{ color: Brand.accent }}>
+                    {existing.name || 'This farmer'} is already registered
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                    {[
+                      existing.farmAddress?.village,
+                      existing.farmAddress?.taluk,
+                      existing.cropCount ? `${existing.cropCount} crop${existing.cropCount > 1 ? 's' : ''}` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || 'No farm details recorded yet'}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                    Saving will move them to you and keep everything they have.
+                  </ThemedText>
+                </View>
+                {/* Straight to them, for the common case: the agent only wanted
+                    to find someone they had already registered. */}
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: '/farmer',
+                      params: { farmerId: existing._id, name: existing.name },
+                    })
+                  }
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.dupOpen, pressed && { opacity: 0.8 }]}>
+                  <ThemedText type="small" style={{ color: Brand.accent, fontWeight: '700' }}>
+                    Open
+                  </ThemedText>
+                </Pressable>
+              </View>
+            ) : null}
 
             {/*
               How this farmer reached us. Optional — a farmer who turns up
@@ -848,6 +937,25 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Brand.danger },
+  checkLine: { marginTop: Spacing.two, fontSize: 12 },
+  /** Who already holds this number — a warning to read, not an error to fix. */
+  dupBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1,
+    borderColor: `${Brand.accent}55`,
+    backgroundColor: Brand.accentSurface,
+  },
+  dupOpen: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
+    borderRadius: Spacing.four,
+    backgroundColor: '#fff',
+  },
   fieldLabel: { marginTop: Spacing.three },
   input: {
     borderRadius: Spacing.two,

@@ -22,6 +22,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CatalogCrop, Farmer, Product, ProductSale } from '@/lib/api';
+import { limitSearch } from '@/lib/mobile';
 
 const GREEN = Brand.primary;
 const AMBER = Brand.accent;
@@ -305,7 +306,7 @@ export default function ProductsGivenScreen() {
             <Ionicons name="search" size={18} color={theme.textSecondary} />
             <TextInput
               value={query}
-              onChangeText={setQuery}
+              onChangeText={(v) => setQuery(limitSearch(v))}
               placeholder="Farmer name or number"
               placeholderTextColor={theme.textSecondary}
               style={[styles.searchInput, { color: theme.text }]}

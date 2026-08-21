@@ -344,6 +344,11 @@ export type ProductSaleItem = {
   imageUrl: string;
   qty: number;
   unitPrice: number;
+  /** As entered: a rupee amount or a percentage, per `discountType`. */
+  discount?: number;
+  discountType?: 'rs' | 'pct';
+  /** The rupees that actually came off this line. */
+  discountAmount?: number;
   lineTotal: number;
   /** Taken at handover. */
   beforePhotoUrl: string;
@@ -353,6 +358,10 @@ export type ProductSaleItem = {
 };
 
 export type ProductSale = {
+  /** A discount on the whole basket, as entered, and what it came to. */
+  discount?: number;
+  discountType?: 'rs' | 'pct';
+  discountAmount?: number;
   _id: string;
   agronomist: string | AgronomistRef | null;
   agronomistName: string;
@@ -1348,6 +1357,14 @@ export const api = {
 
   // Sell products to a farmer on the field, with before/after photos of the crop.
   // Names and line totals are resolved server-side from the catalog.
+  /**
+   * The bill for one sale, as a PDF: farmer, crop, every product with its
+   * discount, and the GST ladder. Opened rather than fetched — the phone hands
+   * the URL to its browser, which downloads and shares it.
+   */
+  saleInvoicePdfUrl: (saleId: string) =>
+    `${BASE_URL}/api/product-sales/${encodeURIComponent(saleId)}/pdf`,
+
   createProductSale: async (body: {
     agronomistId: string;
     farmerId: string;
@@ -1357,8 +1374,18 @@ export const api = {
       productId: string;
       qty: number;
       unitPrice: number;
+      /**
+       * What the agronomist entered, not the rupees it works out to — the
+       * server does that arithmetic, so a rounding difference here can never
+       * change what a farmer was charged.
+       */
+      discount?: number;
+      discountType?: 'rs' | 'pct';
       beforePhoto?: { uri: string; name: string; type: string };
     }[];
+    /** A discount on the whole basket, on top of any per-product ones. */
+    discount?: number;
+    discountType?: 'rs' | 'pct';
     latitude?: number | null;
     longitude?: number | null;
     notes?: string;
@@ -1366,11 +1393,21 @@ export const api = {
     const form = new FormData();
     form.append('agronomistId', body.agronomistId);
     form.append('farmerId', body.farmerId);
+    if (body.discount) form.append('discount', String(body.discount));
+    if (body.discountType) form.append('discountType', body.discountType);
     if (body.cropId) form.append('cropId', body.cropId);
     // Multipart carries the photos, so the basket travels as a JSON string.
     form.append(
       'items',
-      JSON.stringify(body.items.map(({ productId, qty, unitPrice }) => ({ productId, qty, unitPrice })))
+      JSON.stringify(
+        body.items.map(({ productId, qty, unitPrice, discount, discountType }) => ({
+          productId,
+          qty,
+          unitPrice,
+          discount,
+          discountType,
+        }))
+      )
     );
     // Photos ride alongside, keyed by the line's position in that same array.
     body.items.forEach((it, i) => {
