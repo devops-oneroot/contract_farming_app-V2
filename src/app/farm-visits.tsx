@@ -454,6 +454,9 @@ export default function FarmVisitsScreen() {
       rows
         .filter((r) => {
           if (!r.nextFollowUpAt || !matches(r)) return false;
+          // Claimed by To visit once the office has asked for a day — a farmer
+          // on two lists is a farmer visited twice.
+          if (r.visitDate) return false;
           return !Number.isNaN(new Date(r.nextFollowUpAt).getTime());
         })
         .sort(
@@ -495,9 +498,17 @@ export default function FarmVisitsScreen() {
   const todo = useMemo(
     () =>
       remaining.filter(
-        // Once a follow-up date is set the farmer has moved to Follow up, and
-        // showing them in both would have the agent visit twice.
-        (r) => !r.nextFollowUpAt
+        /**
+         * Everyone still to see, plus anyone the office has asked for.
+         *
+         * A follow-up date normally moves a farmer to Follow up, and showing
+         * them in both would have the agent visit twice. But `visitDate` is the
+         * dashboard asking for a visit, and it wins: it is assigned work, so it
+         * belongs on the assigned list. Without this, a request made from the
+         * office against a farmer who already had a follow-up landed in neither
+         * place the office expected, and the agent never saw it.
+         */
+        (r) => !!r.visitDate || !r.nextFollowUpAt
       ),
     [remaining]
   );
