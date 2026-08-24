@@ -262,9 +262,23 @@ export function DayWorkSheet({
                             key={r.id}
                             style={[styles.row, { borderLeftColor: sec.tint }]}>
                             <View style={{ flex: 1 }}>
-                              <ThemedText type="small" style={{ fontWeight: '700' }} numberOfLines={1}>
-                                {r.name || 'Unnamed farmer'}
-                              </ThemedText>
+                              <View style={styles.nameRow}>
+                                <ThemedText
+                                  type="small"
+                                  style={{ fontWeight: '700', flex: 1 }}
+                                  numberOfLines={1}>
+                                  {r.name || (r.toFpo ? 'Unnamed FPO' : 'Unnamed farmer')}
+                                </ThemedText>
+                                {/* A sale to an FPO, marked so the day's record
+                                    does not read as another farmer visit. */}
+                                {r.toFpo ? (
+                                  <View style={styles.fpoTag}>
+                                    <ThemedText type="small" style={styles.fpoTagText}>
+                                      FPO
+                                    </ThemedText>
+                                  </View>
+                                ) : null}
+                              </View>
                               <ThemedText type="small" themeColor="textSecondary" style={styles.small}>
                                 {[
                                   r.mobile || 'no number',
@@ -368,6 +382,14 @@ const styles = StyleSheet.create({
   retry: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.four },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.four },
   stat: { flex: 1, borderRadius: Spacing.three, paddingVertical: Spacing.three, alignItems: 'center' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  fpoTag: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 10,
+    backgroundColor: Brand.secondarySurface,
+  },
+  fpoTagText: { color: Brand.secondary, fontWeight: '800', fontSize: 9 },
   small: { fontSize: 11, marginTop: 1 },
   sectionHead: {
     flexDirection: 'row',

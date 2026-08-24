@@ -147,9 +147,24 @@ export type Fpo = {
   locationSource?: 'gps' | 'search' | '';
   /** Reverse-geocoded from `location`, never typed. Blank if it could not be read. */
   address: FarmAddress;
-  agronomist: string | null;
+  /**
+   * The agronomist who onboarded this FPO.
+   *
+   * Populated by the list endpoint, an id elsewhere — read it through
+   * `fpoOwnerName` rather than comparing it directly, or the comparison
+   * silently fails on one of them.
+   */
+  agronomist: string | AgronomistRef | null;
   createdAt: string;
 };
+
+/** Who onboarded an FPO, when the endpoint populated it. Empty otherwise. */
+export const fpoOwnerName = (f: { agronomist: string | AgronomistRef | null }) =>
+  typeof f.agronomist === 'string' || !f.agronomist ? '' : (f.agronomist.name ?? '');
+
+/** Their id, whichever shape came back. */
+export const fpoOwnerId = (f: { agronomist: string | AgronomistRef | null }) =>
+  typeof f.agronomist === 'string' ? f.agronomist : (f.agronomist?._id ?? null);
 
 /**
  * One page of FPOs. `total` and `totals` describe everything the filter
@@ -357,7 +372,48 @@ export type ProductSaleItem = {
   afterPhotoAt: string | null;
 };
 
+/**
+ * Who a sale went to, whichever kind of buyer it was.
+ *
+ * A sale belongs to a farmer OR an FPO, and every screen that shows one has to
+ * make the same choice about which name, number and destination to use. Doing
+ * it here means a new screen cannot get it wrong, and an FPO sale can never
+ * again be rendered as a farmer with a blank name.
+ */
+export type SaleBuyer = {
+  kind: 'farmer' | 'fpo';
+  /** Null only on a record whose buyer was deleted. */
+  id: string | null;
+  name: string;
+  mobile: string;
+};
+
+export function saleBuyer(s: {
+  farmer?: string | null;
+  farmerName?: string;
+  farmerMobile?: string;
+  fpo?: string | null;
+  fpoName?: string;
+  fpoMobile?: string;
+}): SaleBuyer {
+  // The FPO fields decide it: a farmer sale never has them, and a sale saved
+  // before FPOs could buy has neither, so it falls through to the farmer.
+  if (s.fpo || s.fpoName) {
+    return { kind: 'fpo', id: s.fpo ?? null, name: s.fpoName || 'FPO', mobile: s.fpoMobile || '' };
+  }
+  return {
+    kind: 'farmer',
+    id: s.farmer ?? null,
+    name: s.farmerName || 'Farmer',
+    mobile: s.farmerMobile || '',
+  };
+}
+
 export type ProductSale = {
+  /** Set instead of `farmer` when an FPO bought. Snapshots, like the farmer's. */
+  fpo?: string | null;
+  fpoName?: string;
+  fpoMobile?: string;
   /** A discount on the whole basket, as entered, and what it came to. */
   discount?: number;
   discountType?: 'rs' | 'pct';
@@ -410,6 +466,8 @@ export type DayReportRow = {
   cropName?: string;
   total?: number;
   products?: string[];
+  /** Set on a sale to an FPO, so the day's report can say which kind of buyer. */
+  toFpo?: boolean;
 };
 
 /** What the agent wrote about the day, in their own words. */
@@ -1306,12 +1364,15 @@ export const api = {
   // are due but not yet taken.
   listProductSales: (params: {
     farmerId?: string;
+    /** Sales to one FPO. */
+    fpoId?: string;
     agronomistId?: string;
     since?: string;
     pendingAfter?: boolean;
   }) => {
     const q = new URLSearchParams();
     if (params.farmerId) q.set('farmer', params.farmerId);
+    if (params.fpoId) q.set('fpo', params.fpoId);
     if (params.agronomistId) q.set('agronomist', params.agronomistId);
     if (params.since) q.set('since', params.since);
     if (params.pendingAfter) q.set('pendingAfter', '1');
@@ -1337,6 +1398,8 @@ export const api = {
     productId?: string;
     /** Crop NAME, not id: a Crop belongs to one farmer, the name spans them all. */
     crop?: string;
+    /** Local-midnight instants, so the day boundaries are the caller's own. */
+    range?: DateRange;
     pendingAfter?: boolean;
     page?: number;
     limit?: number;
@@ -1344,6 +1407,10 @@ export const api = {
     const q = new URLSearchParams();
     if (params.farmerId) q.set('farmer', params.farmerId);
     if (params.agronomistId) q.set('agronomist', params.agronomistId);
+    if (params.range) {
+      q.set('from', params.range.from.toISOString());
+      q.set('to', params.range.to.toISOString());
+    }
     if (params.search?.trim()) q.set('search', params.search.trim());
     if (params.productId) q.set('product', params.productId);
     if (params.crop) q.set('crop', params.crop);
@@ -1367,8 +1434,15 @@ export const api = {
 
   createProductSale: async (body: {
     agronomistId: string;
-    farmerId: string;
+    /** One buyer, not both: a farmer OR an FPO. */
+    farmerId?: string;
+    fpoId?: string;
     cropId?: string | null;
+    /**
+     * The crop this was for, by name. Only used for an FPO, which has crop
+     * names but no Crop records to link to.
+     */
+    cropName?: string;
     /** Each product carries its own before-photo; the after comes a week later. */
     items: {
       productId: string;
@@ -1392,7 +1466,9 @@ export const api = {
   }): Promise<ProductSale> => {
     const form = new FormData();
     form.append('agronomistId', body.agronomistId);
-    form.append('farmerId', body.farmerId);
+    if (body.farmerId) form.append('farmerId', body.farmerId);
+    if (body.fpoId) form.append('fpoId', body.fpoId);
+    if (body.cropName) form.append('cropName', body.cropName);
     if (body.discount) form.append('discount', String(body.discount));
     if (body.discountType) form.append('discountType', body.discountType);
     if (body.cropId) form.append('cropId', body.cropId);

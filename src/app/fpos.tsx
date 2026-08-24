@@ -25,7 +25,7 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { FilterPicker } from '@/components/filter-picker';
-import { api, CatalogCrop, DateRange, Fpo } from '@/lib/api';
+import { api, CatalogCrop, DateRange, Fpo, fpoOwnerId, fpoOwnerName } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -43,7 +43,12 @@ const SEARCH_DEBOUNCE_MS = 350;
 const MIN_NUMBER_DIGITS = 8;
 const isNumber = (q: string) => /^\d+$/.test(q);
 /** Enough to fill a tall screen, small enough to arrive on a field connection. */
-const PAGE_SIZE = 20;
+/**
+ * Rows per request, matching the People tab. Small on purpose: this opens on a
+ * phone over a village connection, and the first screenful arriving quickly
+ * matters more than holding every FPO at once.
+ */
+const PAGE_SIZE = 10;
 
 /** Matches the list offered at onboarding, so every chip can return rows. */
 const ROLES = ['President', 'Secretary', 'CEO', 'Director', 'Board member'];
@@ -126,6 +131,10 @@ export default function FposScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  /** Whose FPOs to show, by the agronomist who onboarded them. Null = everyone. */
+  const [onboardedBy, setOnboardedBy] = useState<string | null>(null);
+  /** The agronomists to choose between. Loaded once and kept. */
+  const [staff, setStaff] = useState<{ _id: string; name: string }[]>([]);
   const pageRef = useRef(1);
   /** A slow first page for "ram" must not land on top of results for "ramesh". */
   const request = useRef(0);
@@ -138,7 +147,7 @@ export default function FposScreen() {
   const [dateFilter, setDateFilter] = useState<DateFilter | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [picking, setPicking] = useState<'crop' | null>(null);
+  const [picking, setPicking] = useState<'crop' | 'who' | null>(null);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
 
   useEffect(() => {
@@ -157,13 +166,30 @@ export default function FposScreen() {
     return () => clearTimeout(t);
   }, [query]);
 
+  /** The agronomists to choose between, for the "Onboarded by" filter. */
+  useEffect(() => {
+    api
+      .listAgronomistsWithCounts()
+      .then((list) => setStaff(list.map((a) => ({ _id: a._id, name: a.name }))))
+      .catch(() => setStaff([]));
+  }, []);
+
   const load = useCallback(async () => {
     if (!user) return;
     const ticket = ++request.current;
     setLoading(true);
     try {
       const res = await api.listFposPage({
-        agronomistId: user._id,
+        /**
+         * Everyone's FPOs, not only this agent's.
+         *
+         * An FPO is an organisation the whole team deals with, and an agent
+         * standing in a village needs to find whoever is in front of them —
+         * scoping the list to their own meant an FPO a colleague onboarded
+         * could not be looked up at all, and two agents would register the same
+         * one twice. Each row says whose it is instead.
+         */
+        agronomistId: onboardedBy ?? undefined,
         search: term || undefined,
         role: role ?? undefined,
         crop: crop ?? undefined,
@@ -176,7 +202,7 @@ export default function FposScreen() {
       setFpos(res.items);
       setHasMore(res.hasMore);
       // Only a wholly unfiltered load can speak for the total.
-      if (!term && !role && !crop && !dateFilter) setTotalCount(res.total);
+      if (!term && !role && !crop && !dateFilter && !onboardedBy) setTotalCount(res.total);
     } catch {
       if (ticket === request.current) {
         setFpos([]);
@@ -185,7 +211,7 @@ export default function FposScreen() {
     } finally {
       if (ticket === request.current) setLoading(false);
     }
-  }, [user, term, role, crop, dateFilter]);
+  }, [user, term, role, crop, dateFilter, onboardedBy]);
 
   const loadMore = useCallback(async () => {
     if (!user || loadingMore || !hasMore) return;
@@ -193,7 +219,7 @@ export default function FposScreen() {
     setLoadingMore(true);
     try {
       const res = await api.listFposPage({
-        agronomistId: user._id,
+        agronomistId: onboardedBy ?? undefined,
         search: term || undefined,
         role: role ?? undefined,
         crop: crop ?? undefined,
@@ -212,7 +238,7 @@ export default function FposScreen() {
     } finally {
       if (ticket === request.current) setLoadingMore(false);
     }
-  }, [user, term, role, crop, dateFilter, loadingMore, hasMore]);
+  }, [user, term, role, crop, dateFilter, onboardedBy, loadingMore, hasMore]);
 
   // Also refreshes after an edit, since that is where this screen leads.
   useFocusEffect(
@@ -223,70 +249,107 @@ export default function FposScreen() {
 
   const renderFpo = ({ item: f }: { item: Fpo }) => {
     const where = place(f);
+    const mine = fpoOwnerId(f) === user?._id;
+    const who = fpoOwnerName(f);
+    /**
+     * How big this FPO is, on one line rather than three tiles.
+     *
+     * The figures matter, but not enough to cost a row each — an agent scanning
+     * a list wants to recognise the FPO and get on, and a card that fills half
+     * the screen means scrolling to see the next one.
+     *
+     * `contacts` counts the representative plus their members, which is the
+     * number a person would say out loud.
+     */
+    const facts = [
+      f.farmerCount > 0 ? `${num(f.farmerCount)} farmers` : '',
+      (f.members?.length ?? 0) > 0 ? `${f.members.length + 1} contacts` : '',
+      (f.crops?.length ?? 0) > 0 ? f.crops.join(', ') : '',
+    ].filter(Boolean);
+
     return (
-      <Pressable
-        onPress={() => router.push({ pathname: '/onboard-fpo', params: { fpoId: f._id } } as never)}
-        style={({ pressed }) => pressed && { opacity: 0.7 }}>
-        <ThemedView type="backgroundElement" style={styles.card}>
-          <View style={styles.cardHead}>
-            {f.photoUrl ? (
-              <TappablePhoto uri={f.photoUrl} style={styles.avatar} caption={f.name} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarEmpty]}>
-                <Ionicons name="business" size={18} color={GREEN} />
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <ThemedText type="smallBold">{f.name}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {f.mobile}
-                {f.role ? ` · ${f.role}` : ''}
+      <ThemedView type="backgroundElement" style={styles.card}>
+        {/* Two distinct targets, side by side: the details, and the sale. They
+            were a full-width button nested inside a card-wide Pressable, where
+            the outer one usually won and "Give product" opened the edit form
+            instead. */}
+        <Pressable
+          onPress={() => router.push({ pathname: '/onboard-fpo', params: { fpoId: f._id } } as never)}
+          style={({ pressed }) => [styles.cardMain, pressed && { opacity: 0.7 }]}>
+          {f.photoUrl ? (
+            <TappablePhoto uri={f.photoUrl} style={styles.avatar} caption={f.name} />
+          ) : (
+            // The FPO's initial, not a generic building: scanning a list, the
+            // letter tells them apart and the same icon on every row does not.
+            <View style={[styles.avatar, styles.avatarEmpty]}>
+              <ThemedText style={styles.avatarText}>
+                {f.name?.charAt(0)?.toUpperCase() ?? '?'}
               </ThemedText>
-              {where ? (
-                <View style={styles.placeRow}>
-                  <Ionicons name="location-outline" size={12} color={theme.textSecondary} />
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.small}>
-                    {where}
+            </View>
+          )}
+
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={styles.nameRow}>
+              <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
+                {f.name}
+              </ThemedText>
+              {/* Whose FPO this is, now that the list is everyone's. Marked only
+                  when it belongs to someone else — "yours" is the assumption. */}
+              {!mine && who ? (
+                <View style={styles.byTag}>
+                  <ThemedText type="small" style={styles.byTagText}>
+                    {who}
                   </ThemedText>
                 </View>
               ) : null}
             </View>
-            {/* The whole row opens the form, but the pencil says so. */}
-            <Ionicons name="create-outline" size={18} color={theme.textSecondary} />
-          </View>
 
-          {(f.crops?.length ?? 0) > 0 && (
-            <View style={styles.chipWrap}>
-              {f.crops.map((c) => (
-                <View key={c} style={styles.chip}>
-                  <ThemedText type="small" style={styles.chipText}>
-                    {c}
-                  </ThemedText>
-                </View>
-              ))}
-            </View>
-          )}
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+              {f.mobile}
+              {f.role ? ` · ${f.role}` : ''}
+            </ThemedText>
 
-          <View style={styles.footRow}>
-            {f.farmerCount > 0 && (
-              <View style={styles.footItem}>
-                <Ionicons name="people-outline" size={13} color={theme.textSecondary} />
-                <ThemedText type="small" themeColor="textSecondary" style={styles.small}>
-                  {num(f.farmerCount)} farmers
+            {/* Place and figures share the last line, truncated rather than
+                wrapped: a third line here is what made the card tall. */}
+            {where || facts.length ? (
+              <View style={styles.metaRow}>
+                {where ? (
+                  <Ionicons name="location-outline" size={11} color={theme.textSecondary} />
+                ) : null}
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  numberOfLines={1}
+                  style={styles.meta}>
+                  {[where, ...facts].filter(Boolean).join(' · ')}
                 </ThemedText>
               </View>
-            )}
-            {(f.members?.length ?? 0) > 0 && (
-              <View style={styles.footItem}>
-                <Ionicons name="person-outline" size={13} color={theme.textSecondary} />
-                <ThemedText type="small" themeColor="textSecondary" style={styles.small}>
-                  +{f.members.length} more {f.members.length === 1 ? 'person' : 'people'}
-                </ThemedText>
-              </View>
-            )}
+            ) : null}
           </View>
-        </ThemedView>
-      </Pressable>
+        </Pressable>
+
+        {/* Selling to the FPO itself, as a bulk buyer for its members. Its own
+            square target on the right, so it is never hit by someone aiming at
+            the card — and costs no extra height. */}
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: '/give-product',
+              params: {
+                fpoId: f._id,
+                fpoName: f.name,
+                // Its crops travel as names: an FPO has no Crop records, so
+                // there is nothing to look up on the other side.
+                fpoCrops: (f.crops ?? []).join(','),
+              },
+            } as never)
+          }
+          hitSlop={6}
+          accessibilityLabel={`Give product to ${f.name}`}
+          style={({ pressed }) => [styles.sellBtn, pressed && { opacity: 0.7 }]}>
+          <Ionicons name="cart" size={16} color="#fff" />
+        </Pressable>
+      </ThemedView>
     );
   };
 
@@ -298,7 +361,7 @@ export default function FposScreen() {
             <Ionicons name="chevron-back" size={26} color={theme.text} />
           </Pressable>
           <ThemedText type="smallBold">
-            My FPOs{totalCount != null ? ` (${totalCount})` : ''}
+            FPOs{totalCount != null ? ` (${totalCount})` : ''}
           </ThemedText>
           <Pressable onPress={() => router.push('/onboard-fpo' as never)} hitSlop={10}>
             <Ionicons name="add-circle" size={26} color={GREEN} />
@@ -363,6 +426,19 @@ export default function FposScreen() {
               </Pressable>
             </View>
           ) : null}
+          {onboardedBy ? (
+            <View style={styles.activeFilter}>
+              <Ionicons name="person-add" size={12} color={GREEN} />
+              <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                {onboardedBy === user?._id
+                  ? 'Onboarded by you'
+                  : `By ${staff.find((a) => a._id === onboardedBy)?.name ?? 'agent'}`}
+              </ThemedText>
+              <Pressable onPress={() => setOnboardedBy(null)} hitSlop={10}>
+                <Ionicons name="close-circle" size={16} color={GREEN} />
+              </Pressable>
+            </View>
+          ) : null}
 
           {/* The crop pill is pinned; only the roles scroll past it. Crop is
               the filter an agent changes least and looks for most, so it must
@@ -383,6 +459,34 @@ export default function FposScreen() {
                 {crop ?? 'All crops'}
               </ThemedText>
               <Ionicons name="chevron-down" size={13} color={crop ? '#fff' : theme.textSecondary} />
+            </Pressable>
+
+            <Pressable
+              onPress={() => setPicking('who')}
+              style={[
+                styles.pill,
+                { backgroundColor: onboardedBy ? GREEN : theme.backgroundElement },
+              ]}>
+              <Ionicons
+                name="people-outline"
+                size={13}
+                color={onboardedBy ? '#fff' : theme.textSecondary}
+              />
+              <ThemedText
+                type="small"
+                numberOfLines={1}
+                style={[styles.pillText, { color: onboardedBy ? '#fff' : theme.text }]}>
+                {onboardedBy
+                  ? onboardedBy === user?._id
+                    ? 'You'
+                    : (staff.find((a) => a._id === onboardedBy)?.name ?? 'Agent')
+                  : 'Anyone'}
+              </ThemedText>
+              <Ionicons
+                name="chevron-down"
+                size={13}
+                color={onboardedBy ? '#fff' : theme.textSecondary}
+              />
             </Pressable>
 
             {/* Marks where the fixed part ends and the scrolling part begins. */}
@@ -423,17 +527,39 @@ export default function FposScreen() {
             refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}
             onEndReachedThreshold={0.4}
             onEndReached={loadMore}
+            /**
+             * What the bottom of the list means, the same way the People tab
+             * says it. Scrolling brings the next page in on its own; the button
+             * is what is left when that misses — a short list that never
+             * scrolls, or a request that failed — so the agent is never stuck
+             * at a stale end.
+             */
             ListFooterComponent={
-              loadingMore ? (
-                <ActivityIndicator style={{ marginVertical: Spacing.four }} color={GREEN} />
-              ) : !hasMore && fpos.length >= PAGE_SIZE ? (
-                <ThemedText
-                  type="small"
-                  themeColor="textSecondary"
-                  style={{ textAlign: 'center', marginVertical: Spacing.four }}>
-                  That is everything.
-                </ThemedText>
-              ) : null
+              fpos.length === 0 ? null : (
+                <View style={styles.listFoot}>
+                  {loadingMore ? (
+                    <View style={styles.footRowCenter}>
+                      <ActivityIndicator size="small" color={GREEN} />
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Loading more…
+                      </ThemedText>
+                    </View>
+                  ) : hasMore ? (
+                    <Pressable
+                      onPress={loadMore}
+                      style={({ pressed }) => [styles.loadMoreBtn, pressed && { opacity: 0.8 }]}>
+                      <Ionicons name="chevron-down" size={14} color={GREEN} />
+                      <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                        Load {PAGE_SIZE} more
+                      </ThemedText>
+                    </Pressable>
+                  ) : (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      All {totalCount ?? fpos.length} FPOs shown
+                    </ThemedText>
+                  )}
+                </View>
+              )
             }
             ListEmptyComponent={
               <ThemedView type="backgroundElement" style={styles.empty}>
@@ -459,6 +585,18 @@ export default function FposScreen() {
         )}
       </SafeAreaView>
 
+      <FilterPicker
+        visible={picking === 'who'}
+        title="Onboarded by"
+        allLabel="Everyone"
+        options={staff.map((a) => ({
+          value: a._id,
+          label: a._id === user?._id ? `${a.name} (you)` : a.name,
+        }))}
+        selected={onboardedBy}
+        onSelect={setOnboardedBy}
+        onClose={() => setPicking(null)}
+      />
       <FilterPicker
         visible={picking === 'crop'}
         title="Crops"
@@ -665,24 +803,62 @@ const styles = StyleSheet.create({
   pillDivider: { width: 1, height: 18, marginHorizontal: Spacing.one },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   empty: { padding: Spacing.five, borderRadius: Spacing.four, alignItems: 'center', gap: Spacing.two },
-  card: { padding: Spacing.three, borderRadius: Spacing.four, marginBottom: Spacing.three },
-  cardHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#d8d8d8' },
+  /** One row: details on the left, the sale button on the right. */
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  cardMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#d8d8d8' },
   avatarEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: GREEN,
+  },
+  avatarText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  meta: { flex: 1, fontSize: 11 },
+  /** How big this FPO is, as figures rather than a grey run-on line. */
+  /** Separates the details from the action, so neither is hit by accident. */
+  listFoot: { alignItems: 'center', paddingVertical: Spacing.four, gap: Spacing.two },
+  footRowCenter: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  loadMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+    borderColor: `${GREEN}55`,
     backgroundColor: Brand.primarySurface,
   },
-  placeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
-  small: { fontSize: 11 },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.one, marginTop: Spacing.two },
-  chip: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 2,
-    borderRadius: Spacing.five,
-    backgroundColor: Brand.primarySurface,
+  /** Sell to this FPO. Outlined, so it reads as an action on the card rather
+   *  than another fact about it. */
+  sellBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: GREEN,
   },
-  chipText: { color: GREEN, fontWeight: '700', fontSize: 11 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  /** Onboarded by a colleague, not by the agent reading this. */
+  byTag: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Spacing.four,
+    backgroundColor: Brand.secondarySurface,
+  },
+  byTagText: { color: Brand.secondary, fontWeight: '700', fontSize: 10 },
   footRow: { flexDirection: 'row', gap: Spacing.three, marginTop: Spacing.two },
-  footItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
 });

@@ -24,7 +24,7 @@ import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, Crop, Farmer, isContract, PackageOfPractices, PopStep } from '@/lib/api';
+import { api, Crop, Farmer, isContract, PackageOfPractices, PopStep, saleBuyer } from '@/lib/api';
 import { callFarmer } from '@/lib/call';
 
 const GREEN = Brand.primary;
@@ -102,12 +102,20 @@ export default function PendingScreen() {
             sales.flatMap((s) =>
               s.items
                 .map((it, index) => ({ it, index }))
-                .filter(({ it }) => !it.afterPhotoUrl)
+                /**
+                 * Only a line photographed at handover is owed the second shot.
+                 * A line with neither would sit here for ever asking for the
+                 * other half of a comparison that does not exist — the server
+                 * filters the same way, this is the matching half.
+                 */
+                .filter(({ it }) => !!it.beforePhotoUrl && !it.afterPhotoUrl)
                 .map(({ it, index }) => ({
                   saleId: s._id,
                   index,
                   product: it.name,
-                  farmer: s.farmerName,
+                  // Farmer or FPO — one helper, so the row can never name the
+                  // wrong kind of buyer or show a blank.
+                  farmer: saleBuyer(s).name,
                   crop: s.cropName,
                   soldAt: s.soldAt,
                   beforePhotoUrl: it.beforePhotoUrl,

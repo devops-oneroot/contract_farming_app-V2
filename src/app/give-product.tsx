@@ -142,8 +142,30 @@ export default function GiveProductScreen() {
   const { width } = useWindowDimensions();
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
-  const params = useLocalSearchParams<{ farmerId?: string; farmerName?: string }>();
+  const params = useLocalSearchParams<{
+    farmerId?: string;
+    farmerName?: string;
+    fpoId?: string;
+    fpoName?: string;
+    /** The FPO's crop names, comma-separated. It has no Crop records. */
+    fpoCrops?: string;
+  }>();
   const farmerId = params.farmerId ?? '';
+  /**
+   * Selling to an FPO instead of a farmer.
+   *
+   * The whole screen works the same either way, with two differences an FPO
+   * forces: it has no Crop records — only the names of crops it deals in — and
+   * no single field to photograph, so the proof shots are optional. Everything
+   * else, including the bill and the discounts, is identical.
+   */
+  const fpoId = params.fpoId ?? '';
+  const toFpo = !!fpoId;
+  const buyerId = fpoId || farmerId;
+  const buyerName = (toFpo ? params.fpoName : params.farmerName) || (toFpo ? 'this FPO' : 'this farmer');
+  /** An FPO's crops are names, chosen from what it deals in. */
+  const fpoCropNames = (params.fpoCrops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
+  const [cropName, setCropName] = useState<string | null>(null);
 
   // Two per row, inside the screen's horizontal padding.
   const cardW = (width - Spacing.four * 2 - Spacing.three) / 2;
@@ -183,27 +205,31 @@ export default function GiveProductScreen() {
   const crop = crops.find((c) => c._id === cropId) ?? null;
 
   useEffect(() => {
-    if (!farmerId) return;
+    if (!buyerId) return;
     (async () => {
       try {
         const [cropList, productList, saleList] = await Promise.all([
-          api.listCrops(farmerId),
+          // An FPO has no Crop records — its crops are names on the FPO itself.
+          toFpo ? Promise.resolve([] as Crop[]) : api.listCrops(farmerId),
           api.listProducts(),
           // History is context, not a prerequisite: never block the sale on it.
-          api.listProductSales({ farmerId }).catch(() => [] as ProductSale[]),
+          api
+            .listProductSales(toFpo ? { fpoId } : { farmerId })
+            .catch(() => [] as ProductSale[]),
         ]);
         setCrops(cropList);
         setProducts(productList);
         setPast(saleList);
         // One crop means there is nothing to choose — pick it for them.
         if (cropList.length === 1) setCropId(cropList[0]._id);
+        if (toFpo && fpoCropNames.length === 1) setCropName(fpoCropNames[0]);
       } catch (e: any) {
-        setError(e?.message || 'Could not load this farmer’s crops and products.');
+        setError(e?.message || 'Could not load the crops and products.');
       } finally {
         setLoading(false);
       }
     })();
-  }, [farmerId]);
+  }, [buyerId]);
 
   // Stamp where the sale happened. Best-effort: a missing fix must not block it.
   useEffect(() => {
@@ -356,11 +382,18 @@ export default function GiveProductScreen() {
     setCameraFor(null);
   };
 
-  // Every product needs its before-shot before the sale can be recorded.
-  const missingPhotos = inCart.filter((p) => !cart[p._id].before);
+  /**
+   * Products still without their before-shot.
+   *
+   * Required for a farmer, where the photo is the proof the product reached a
+   * particular field. Optional for an FPO: it buys in bulk for its members and
+   * there is no one crop to point a camera at, so demanding a photo would only
+   * teach agents to photograph the floor.
+   */
+  const missingPhotos = toFpo ? [] : inCart.filter((p) => !cart[p._id].before);
 
   const save = async () => {
-    if (!user || !farmerId) return;
+    if (!user || !buyerId) return;
     if (inCart.length === 0) {
       setError('Add at least one product.');
       return;
@@ -379,19 +412,38 @@ export default function GiveProductScreen() {
       // Shrink here rather than at capture time: a dozen full-resolution frames
       // would make this upload enormous, but the preview must never wait on it.
       const items = await Promise.all(
-        inCart.map(async (p, i) => ({
-          productId: p._id,
-          qty: cart[p._id].qty,
-          unitPrice: Number(cart[p._id].price) || 0,
-          discount: Math.max(0, Number(cart[p._id].discount) || 0),
-          discountType: cart[p._id].discountType,
-          beforePhoto: { uri: await shrink(cart[p._id].before!), name: `before_${i}.jpg`, type: 'image/jpeg' },
-        }))
+        inCart.map(async (p, i) => {
+          const line = cart[p._id];
+          /**
+           * The photo is attached only when there is one.
+           *
+           * A line with no shot used to still build `{ uri: null }`, and React
+           * Native's FormData fails at the network layer on a file with no URI
+           * — which surfaces as "Network request failed" with no clue that a
+           * photo was the cause. Farmer sales always had one, so this only
+           * appeared once FPO sales made the photo optional.
+           */
+          const before = line.before
+            ? { uri: await shrink(line.before), name: `before_${i}.jpg`, type: 'image/jpeg' }
+            : undefined;
+          return {
+            productId: p._id,
+            qty: line.qty,
+            unitPrice: Number(line.price) || 0,
+            discount: Math.max(0, Number(line.discount) || 0),
+            discountType: line.discountType,
+            ...(before ? { beforePhoto: before } : {}),
+          };
+        })
       );
       const saved = await api.createProductSale({
         agronomistId: user._id,
-        farmerId,
-        cropId,
+        // One buyer, never both — the server rejects a request carrying two.
+        ...(toFpo ? { fpoId } : { farmerId }),
+        // An FPO has no Crop records to link to, only the crop it was for by
+        // name.
+        cropId: toFpo ? null : cropId,
+        cropName: toFpo ? (cropName ?? undefined) : undefined,
         items,
         discount: Math.max(0, Number(saleDiscount) || 0),
         discountType: saleDiscountType,
@@ -430,7 +482,7 @@ export default function GiveProductScreen() {
   const photoSlot = (productId: string, uri: string | null) => (
     <View style={{ flex: 1 }}>
       <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.one }}>
-        Before photo
+        Before photo{toFpo ? ' (optional)' : ''}
       </ThemedText>
       {uri ? (
         <Pressable onPress={() => setCameraFor(productId)}>
@@ -479,8 +531,34 @@ export default function GiveProductScreen() {
             <>
               <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
                 <ThemedText type="small" themeColor="textSecondary">
-                  Selling to {params.farmerName || 'this farmer'}
+                  Selling to {buyerName}
+                  {toFpo ? ' (FPO)' : ''}
                 </ThemedText>
+
+                {/* An FPO's crops are names it deals in, not Crop records, so
+                    they are chosen the same way but stored as text. */}
+                {toFpo && fpoCropNames.length > 0 ? (
+                  <View style={styles.chipWrap}>
+                    {fpoCropNames.map((c) => {
+                      const on = cropName === c;
+                      return (
+                        <Pressable
+                          key={c}
+                          onPress={() => setCropName(on ? null : c)}
+                          style={[
+                            styles.chip,
+                            { backgroundColor: on ? GREEN : theme.backgroundElement },
+                          ]}>
+                          <ThemedText
+                            type="small"
+                            style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>
+                            {c}
+                          </ThemedText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
 
                 {/* Which crop it is for — decides which products are offered. */}
                 {crops.length > 0 && (

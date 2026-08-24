@@ -21,7 +21,8 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Farmer, Product, ProductSale } from '@/lib/api';
+import { api, CatalogCrop, Farmer, Product, ProductSale, saleBuyer } from '@/lib/api';
+import { DateFilter, DateFilterSheet } from '@/components/date-filter-sheet';
 import { limitSearch } from '@/lib/mobile';
 
 const GREEN = Brand.primary;
@@ -81,13 +82,16 @@ export default function ProductsGivenScreen() {
   const [hasMore, setHasMore] = useState(false);
   const page = useRef(1);
 
-  // Farmer name or number only. Product and crop are picked, not typed.
+  // Farmer or FPO, by name or number. Product and crop are picked, not typed.
   const [query, setQuery] = useState('');
   const [term, setTerm] = useState('');
   const [dueOnly, setDueOnly] = useState(false);
   const [productId, setProductId] = useState<string | null>(null);
   const [crop, setCrop] = useState<string | null>(null);
   const [picking, setPicking] = useState<'product' | 'crop' | null>(null);
+  /** When these were given. Null shows every sale, however old. */
+  const [dateFilter, setDateFilter] = useState<DateFilter | null>(null);
+  const [dateOpen, setDateOpen] = useState(false);
 
   // The catalogues that back the two pickers.
   const [products, setProducts] = useState<Product[]>([]);
@@ -112,6 +116,7 @@ export default function ProductsGivenScreen() {
           search: term,
           productId: productId ?? undefined,
           crop: crop ?? undefined,
+          range: dateFilter ?? undefined,
           pendingAfter: dueOnly,
           page: 1,
           limit: PAGE_SIZE,
@@ -136,7 +141,7 @@ export default function ProductsGivenScreen() {
     } finally {
       if (ticket === request.current) setLoading(false);
     }
-  }, [user, term, dueOnly, productId, crop]);
+  }, [user, term, dueOnly, productId, crop, dateFilter]);
 
   const loadMore = useCallback(async () => {
     if (!user || loadingMore || !hasMore) return;
@@ -148,6 +153,7 @@ export default function ProductsGivenScreen() {
         search: term,
         productId: productId ?? undefined,
         crop: crop ?? undefined,
+        range: dateFilter ?? undefined,
         pendingAfter: dueOnly,
         page: page.current + 1,
         limit: PAGE_SIZE,
@@ -163,7 +169,7 @@ export default function ProductsGivenScreen() {
     } finally {
       if (ticket === request.current) setLoadingMore(false);
     }
-  }, [user, term, dueOnly, productId, crop, loadingMore, hasMore]);
+  }, [user, term, dueOnly, productId, crop, dateFilter, loadingMore, hasMore]);
 
   /**
    * Fetched once and never paged: the roster only supplies photos and
@@ -196,36 +202,69 @@ export default function ProductsGivenScreen() {
 
   const renderSale = ({ item: s }: { item: ProductSale }) => {
     const due = !!s.afterDueAt && new Date(s.afterDueAt).getTime() <= Date.now();
-    const farmer = farmers[s.farmer];
+    // A sale goes to a farmer or an FPO. Read through one helper so the two can
+    // never be shown as each other.
+    const buyer = saleBuyer(s);
+    const toFpo = buyer.kind === 'fpo';
+    // Photo and address live on the farmer record; an FPO has neither here.
+    const farmer = toFpo ? undefined : farmers[s.farmer ?? ''];
     const where = place(farmer);
     return (
       <Pressable
-        // The follow-up photo is taken from the farmer's page, so send them
-        // where they can act on what they just read.
-        onPress={() =>
-          router.push({
-            pathname: '/farmer',
-            params: { farmerId: s.farmer, name: s.farmerName },
-          } as never)
+        /**
+         * A farmer's row opens their page, where the follow-up photo is taken.
+         * An FPO has no such page and no after-photo to chase, so its row is
+         * not a link to somewhere that cannot act on it.
+         */
+        onPress={
+          toFpo
+            ? undefined
+            : () =>
+                router.push({
+                  pathname: '/farmer',
+                  params: { farmerId: s.farmer, name: buyer.name },
+                } as never)
         }
-        style={({ pressed }) => pressed && { opacity: 0.7 }}>
+        style={({ pressed }) => !toFpo && pressed && { opacity: 0.7 }}>
         <ThemedView type="backgroundElement" style={styles.card}>
           <View style={styles.cardHead}>
             {/* Onboarding photo when there is one; initial otherwise, so the
                 row never collapses to a different height. */}
             {farmer?.photoUrl ? (
-              <TappablePhoto uri={farmer.photoUrl} style={styles.avatar} caption={s.farmerName} />
+              <TappablePhoto uri={farmer.photoUrl} style={styles.avatar} caption={buyer.name} />
             ) : (
-              <View style={[styles.avatar, styles.avatarEmpty]}>
-                <ThemedText type="smallBold" style={{ color: GREEN }}>
-                  {(s.farmerName || '?').trim().charAt(0).toUpperCase()}
-                </ThemedText>
+              <View
+                style={[
+                  styles.avatar,
+                  styles.avatarEmpty,
+                  toFpo && { backgroundColor: Brand.secondarySurface },
+                ]}>
+                {toFpo ? (
+                  <Ionicons name="business" size={17} color={Brand.secondary} />
+                ) : (
+                  <ThemedText type="smallBold" style={{ color: GREEN }}>
+                    {buyer.name.trim().charAt(0).toUpperCase()}
+                  </ThemedText>
+                )}
               </View>
             )}
             <View style={{ flex: 1 }}>
-              <ThemedText type="smallBold">{s.farmerName || 'Farmer'}</ThemedText>
+              <View style={styles.nameRow}>
+                <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
+                  {buyer.name}
+                </ThemedText>
+                {/* Said, not implied. Without it an FPO sale reads as a farmer
+                    sale whose details happen to be missing. */}
+                {toFpo ? (
+                  <View style={styles.fpoTag}>
+                    <ThemedText type="small" style={styles.fpoTagText}>
+                      FPO
+                    </ThemedText>
+                  </View>
+                ) : null}
+              </View>
               <ThemedText type="small" themeColor="textSecondary">
-                {s.farmerMobile || 'no number'}
+                {buyer.mobile || 'no number'}
                 {s.cropName ? ` · ${s.cropName}` : ''}
               </ThemedText>
               {where ? (
@@ -302,12 +341,13 @@ export default function ProductsGivenScreen() {
         {/* Kept out of the list: an agent filtering a long history should not
             have to scroll back up to change what they searched for. */}
         <View style={styles.tools}>
-          <View style={[styles.search, { backgroundColor: theme.backgroundElement }]}>
+          <View style={styles.searchRow}>
+          <View style={[styles.search, { flex: 1, backgroundColor: theme.backgroundElement }]}>
             <Ionicons name="search" size={18} color={theme.textSecondary} />
             <TextInput
               value={query}
               onChangeText={(v) => setQuery(limitSearch(v))}
-              placeholder="Farmer name or number"
+              placeholder="Farmer or FPO name or number"
               placeholderTextColor={theme.textSecondary}
               style={[styles.searchInput, { color: theme.text }]}
             />
@@ -317,6 +357,37 @@ export default function ProductsGivenScreen() {
               </Pressable>
             ) : null}
           </View>
+
+          {/* Beside the search box, where the People tab keeps its own — an
+              agent who learns it once should find it in the same place. */}
+          <Pressable
+            onPress={() => setDateOpen(true)}
+            style={[
+              styles.calendarBtn,
+              { backgroundColor: dateFilter ? GREEN : theme.backgroundElement },
+            ]}>
+            <Ionicons
+              name="calendar"
+              size={18}
+              color={dateFilter ? '#fff' : theme.textSecondary}
+            />
+          </Pressable>
+
+          </View>
+
+          {/* An active date has to be visible, or an empty list reads as lost
+              records rather than a filter doing its job. */}
+          {dateFilter ? (
+            <View style={styles.activeFilter}>
+              <Ionicons name="funnel" size={12} color={GREEN} />
+              <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                {dateFilter.label}
+              </ThemedText>
+              <Pressable onPress={() => setDateFilter(null)} hitSlop={10}>
+                <Ionicons name="close-circle" size={16} color={GREEN} />
+              </Pressable>
+            </View>
+          ) : null}
 
           {/* Product and crop, each its own filter, each showing what is
               currently chosen rather than a bare label. */}
@@ -471,6 +542,14 @@ export default function ProductsGivenScreen() {
         )}
       </SafeAreaView>
 
+      <DateFilterSheet
+        visible={dateOpen}
+        value={dateFilter}
+        onChange={setDateFilter}
+        onClose={() => setDateOpen(false)}
+        dayHint="products given"
+      />
+
       <FilterPicker
         visible={picking === 'product'}
         title="Products"
@@ -506,6 +585,28 @@ const styles = StyleSheet.create({
   },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   tools: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.two, gap: Spacing.two },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  calendarBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: Spacing.three,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** The chosen period, said out loud so an empty list explains itself. */
+  activeFilter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 5,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+    borderColor: `${GREEN}55`,
+    backgroundColor: Brand.primarySurface,
+  },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -545,6 +646,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Brand.primarySurface,
   },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  /** Marks a sale to an FPO, which is a different kind of buyer entirely. */
+  fpoTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Spacing.four,
+    backgroundColor: Brand.secondarySurface,
+  },
+  fpoTagText: { color: Brand.secondary, fontWeight: '800', fontSize: 10 },
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
   placeText: { fontSize: 11 },
   line: {
