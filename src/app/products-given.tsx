@@ -47,6 +47,17 @@ function ago(iso: string) {
 }
 
 /**
+ * Was this typed up long after the sale happened?
+ *
+ * `soldAt` is what the agent says, `createdAt` is when the record reached us;
+ * a wide gap between them means the sale was entered from memory rather than
+ * on the day. Two days of slack keeps normal evening catch-up out of it.
+ */
+const LATE_ENTRY_MS = 2 * 86_400_000;
+const enteredLate = (s: ProductSale) =>
+  !!s.createdAt && new Date(s.createdAt).getTime() - new Date(s.soldAt).getTime() > LATE_ENTRY_MS;
+
+/**
  * Taluk and district, whichever of them the farmer actually has. Rural
  * addresses are often part-filled, so this never renders a stray comma.
  */
@@ -283,6 +294,16 @@ export default function ProductsGivenScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 {ago(s.soldAt)}
               </ThemedText>
+              {/* A record written up well after the handover. Said plainly, so
+                  the date on the row is not mistaken for the day somebody sat
+                  down and typed it. A day's gap is ordinary — an agent
+                  finishing their round in the evening — so only a real gap
+                  counts. */}
+              {enteredLate(s) ? (
+                <ThemedText type="small" style={{ color: Brand.accent, fontWeight: '700' }}>
+                  added later
+                </ThemedText>
+              ) : null}
             </View>
           </View>
 
@@ -335,7 +356,17 @@ export default function ProductsGivenScreen() {
             <Ionicons name="chevron-back" size={26} color={theme.text} />
           </Pressable>
           <ThemedText type="smallBold">Products given</ThemedText>
-          <View style={{ width: 26 }} />
+          {/* Sales made on the field get recorded on the field. This is for the
+              ones that did not — a sale from last week that never got typed
+              in. It lives here rather than on a farmer's page because that is
+              how the gap is noticed: looking at this list and missing a row. */}
+          <Pressable
+            onPress={() => router.push('/old-sale-buyer' as never)}
+            hitSlop={10}
+            accessibilityLabel="Add an old sale that was not recorded"
+            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.75 }]}>
+            <Ionicons name="add" size={18} color="#fff" />
+          </Pressable>
         </View>
 
         {/* Kept out of the list: an agent filtering a long history should not
@@ -575,6 +606,14 @@ export default function ProductsGivenScreen() {
 }
 
 const styles = StyleSheet.create({
+  addBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: GREEN,
+  },
   container: { flex: 1 },
   topBar: {
     flexDirection: 'row',

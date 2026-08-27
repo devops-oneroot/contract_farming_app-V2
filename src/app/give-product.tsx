@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
@@ -59,6 +60,20 @@ type DiscountType = 'rs' | 'pct';
 
 const money = (n: number) =>
   `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * The chosen day at noon.
+ *
+ * A day picked from a calendar has no time of its own, and midnight is a bad
+ * one to invent: five and a half hours of IST offset either side of it is
+ * enough to file the sale on the day before or the day after, depending on
+ * whose clock reads it. Midday is far from both edges.
+ */
+const atMidday = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+
+const dayLabel = (d: Date) =>
+  d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
 /** GST on farm inputs: 5% in total, split evenly between CGST and SGST. */
 const GST_RATE = 0.05;
@@ -149,6 +164,11 @@ export default function GiveProductScreen() {
     fpoName?: string;
     /** The FPO's crop names, comma-separated. It has no Crop records. */
     fpoCrops?: string;
+    /**
+     * '1' when an old sale is being written up after the fact, reached from
+     * Products given rather than from the buyer's own page.
+     */
+    backdate?: string;
   }>();
   const farmerId = params.farmerId ?? '';
   /**
@@ -166,6 +186,18 @@ export default function GiveProductScreen() {
   /** An FPO's crops are names, chosen from what it deals in. */
   const fpoCropNames = (params.fpoCrops ?? '').split(',').map((c) => c.trim()).filter(Boolean);
   const [cropName, setCropName] = useState<string | null>(null);
+
+  /**
+   * Writing up a sale that already happened.
+   *
+   * Two things change, and nothing else: the day has to be asked for rather
+   * than taken from the clock, and the before-photos stop being required. The
+   * crop was handed over weeks ago; there is nothing left to photograph, and
+   * demanding a shot would either block the record or invite a fake one.
+   */
+  const backdating = params.backdate === '1';
+  const [soldAt, setSoldAt] = useState<Date | null>(null);
+  const [datePicker, setDatePicker] = useState(false);
 
   // Two per row, inside the screen's horizontal padding.
   const cardW = (width - Spacing.four * 2 - Spacing.three) / 2;
@@ -390,7 +422,7 @@ export default function GiveProductScreen() {
    * there is no one crop to point a camera at, so demanding a photo would only
    * teach agents to photograph the floor.
    */
-  const missingPhotos = toFpo ? [] : inCart.filter((p) => !cart[p._id].before);
+  const missingPhotos = toFpo || backdating ? [] : inCart.filter((p) => !cart[p._id].before);
 
   const save = async () => {
     if (!user || !buyerId) return;
@@ -404,6 +436,12 @@ export default function GiveProductScreen() {
     }
     if (missingPhotos.length) {
       setError(`Take a before photo for ${missingPhotos.map((p) => p.name).join(', ')}.`);
+      return;
+    }
+    // Asked for, never assumed. Defaulting to today would quietly file the
+    // backlog on the day it was typed, which is the very thing this is for.
+    if (backdating && !soldAt) {
+      setError('Pick the day this sale happened.');
       return;
     }
     setSaving(true);
@@ -450,6 +488,10 @@ export default function GiveProductScreen() {
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
+        // A full instant at local midday, not a bare date: read as UTC it
+        // would still land on the right day in IST, where a bare midnight
+        // would not.
+        soldAt: soldAt ? atMidday(soldAt).toISOString() : undefined,
       });
       posthog?.capture('product_sold_on_field', {
         crop: crop?.name ?? '',
@@ -509,6 +551,58 @@ export default function GiveProductScreen() {
 
   const inputStyle = [styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }];
 
+  /**
+   * The day an old sale happened, asked for on both steps.
+   *
+   * Rendered twice on purpose: it is the one thing about this record that is
+   * not obvious from the screen, and an agent who scrolls past it while
+   * picking products should meet it again before saving.
+   */
+  const dateRow = backdating ? (
+    <View style={{ gap: Spacing.two }}>
+      <Pressable
+        onPress={() => setDatePicker(true)}
+        style={[
+          styles.dateRow,
+          {
+            backgroundColor: theme.backgroundElement,
+            borderColor: soldAt ? GREEN : Brand.accent,
+          },
+        ]}>
+        <Ionicons name="calendar-outline" size={18} color={soldAt ? GREEN : Brand.accent} />
+        <View style={{ flex: 1 }}>
+          <ThemedText type="small" themeColor="textSecondary">
+            Date of this sale
+          </ThemedText>
+          <ThemedText type="smallBold" style={{ color: soldAt ? theme.text : Brand.accent }}>
+            {soldAt ? dayLabel(soldAt) : 'Tap to pick the day'}
+          </ThemedText>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+      </Pressable>
+
+      {datePicker && (
+        <DateTimePicker
+          value={soldAt ?? new Date()}
+          mode="date"
+          // Nothing ahead of today, and nothing beyond a real backlog. The
+          // server enforces both again; this only saves the trip.
+          maximumDate={new Date()}
+          minimumDate={new Date(Date.now() - 730 * 24 * 60 * 60 * 1000)}
+          onChange={(event, selected) => {
+            if (Platform.OS !== 'ios') setDatePicker(false);
+            if (event.type === 'set' && selected) setSoldAt(selected);
+          }}
+        />
+      )}
+      {Platform.OS === 'ios' && datePicker && (
+        <Pressable onPress={() => setDatePicker(false)} style={{ alignSelf: 'flex-end' }}>
+          <ThemedText type="linkPrimary">Done</ThemedText>
+        </Pressable>
+      )}
+    </View>
+  ) : null;
+
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -520,7 +614,13 @@ export default function GiveProductScreen() {
               <Ionicons name="chevron-back" size={26} color={theme.text} />
             </Pressable>
             <ThemedText type="smallBold">
-              {step === 'pick' ? 'Give product' : 'Confirm sale'}
+              {backdating
+                ? step === 'pick'
+                  ? 'Add old sale'
+                  : 'Confirm old sale'
+                : step === 'pick'
+                  ? 'Give product'
+                  : 'Confirm sale'}
             </ThemedText>
             <View style={{ width: 26 }} />
           </View>
@@ -531,9 +631,12 @@ export default function GiveProductScreen() {
             <>
               <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
                 <ThemedText type="small" themeColor="textSecondary">
-                  Selling to {buyerName}
+                  {backdating ? 'Recording an old sale to ' : 'Selling to '}
+                  {buyerName}
                   {toFpo ? ' (FPO)' : ''}
                 </ThemedText>
+
+                {dateRow}
 
                 {/* An FPO's crops are names it deals in, not Crop records, so
                     they are chosen the same way but stored as text. */}
@@ -750,13 +853,21 @@ export default function GiveProductScreen() {
               keyboardShouldPersistTaps="handled">
               {/* One card per product: quantity, the price agreed on the field, and
                   its own before/after proof of the crop. */}
+              {dateRow}
+
               <View style={styles.confirmHead}>
                 <ThemedText type="smallBold">Basket ({inCart.length})</ThemedText>
-                <ThemedText
-                  type="small"
-                  style={{ color: missingPhotos.length ? Brand.accent : GREEN, fontWeight: '700' }}>
-                  Photos {inCart.length - missingPhotos.length}/{inCart.length}
-                </ThemedText>
+                {backdating ? (
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Photos not needed
+                  </ThemedText>
+                ) : (
+                  <ThemedText
+                    type="small"
+                    style={{ color: missingPhotos.length ? Brand.accent : GREEN, fontWeight: '700' }}>
+                    Photos {inCart.length - missingPhotos.length}/{inCart.length}
+                  </ThemedText>
+                )}
               </View>
 
               {inCart.map((p, i) => {
@@ -1236,6 +1347,15 @@ const styles = StyleSheet.create({
   netLabel: { color: GREEN },
   netValue: { color: GREEN, fontSize: 16 },
   // ----- The bill -----
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
   billCard: {
     backgroundColor: '#fff',
     borderRadius: Spacing.three,

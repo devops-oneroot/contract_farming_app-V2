@@ -1463,6 +1463,16 @@ export const api = {
     latitude?: number | null;
     longitude?: number | null;
     notes?: string;
+    /**
+     * When the sale actually happened, for a record being entered after the
+     * fact. Left off for a sale being made now, and the server dates it.
+     *
+     * A full instant, not a bare `YYYY-MM-DD`: the server reads a bare date as
+     * UTC midnight, which in IST is half past five in the morning of the same
+     * day — close enough to slide a sale into the day before on any filter
+     * that works in local time.
+     */
+    soldAt?: string;
   }): Promise<ProductSale> => {
     const form = new FormData();
     form.append('agronomistId', body.agronomistId);
@@ -1492,6 +1502,7 @@ export const api = {
     if (body.latitude != null) form.append('latitude', String(body.latitude));
     if (body.longitude != null) form.append('longitude', String(body.longitude));
     if (body.notes) form.append('notes', body.notes);
+    if (body.soldAt) form.append('soldAt', body.soldAt);
     const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save the sale');

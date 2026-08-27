@@ -122,7 +122,7 @@ export default function VisitFarmerScreen() {
   const [notesFocused, setNotesFocused] = useState(false);
 
   /**
-   * Bring the notes field back above the keyboard.
+   * Bring the follow-up note back above the keyboard.
    *
    * Deferred by a frame on purpose. Whichever way the room gets made — Android
    * grows the content by the keyboard's height, iOS shrinks the scroll view
@@ -138,7 +138,6 @@ export default function VisitFarmerScreen() {
   useEffect(() => {
     if (notesFocused && keyboardHeight > 0) revealNotes();
   }, [notesFocused, keyboardHeight, revealNotes]);
-  const [notes, setNotes] = useState('');
   /**
    * When to come back. Required: every visit ends by deciding when the next one
    * is, which is what puts the farmer into the "Follow up" list on the Farm
@@ -221,6 +220,10 @@ export default function VisitFarmerScreen() {
       setError('Please take at least one photo as proof of visit.');
       return;
     }
+    if (!followUpNote.trim()) {
+      setError('Write your remarks — what came of this visit.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -235,7 +238,6 @@ export default function VisitFarmerScreen() {
         farmerName: params.farmerName,
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
-        notes: notes.trim(),
         source: params.source ?? null,
         nextFollowUpAt: followUp ? followUp.toISOString() : null,
         followUpNote: followUpNote.trim(),
@@ -312,7 +314,7 @@ export default function VisitFarmerScreen() {
               shrinks the scroll view by the keyboard's height, and adding the
               same height again as padding left a second keyboard's worth of
               blank space below the button — which `scrollToEnd` then dutifully
-              scrolled to, parking the notes field off the top of the screen.
+              scrolled to, parking the follow-up note off the top of the screen.
             */
             contentContainerStyle={[
               styles.body,
@@ -392,21 +394,6 @@ export default function VisitFarmerScreen() {
               {renderPhotoSlot(farmerPhoto, 'Photo with farmer', 'farmer', 'people-outline')}
             </View>
 
-            {/* Notes */}
-            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
-              Notes (optional)
-            </ThemedText>
-            <TextInput
-              value={notes}
-              onChangeText={setNotes}
-              placeholder="Anything about this visit"
-              placeholderTextColor={theme.textSecondary}
-              multiline
-              onFocus={() => setNotesFocused(true)}
-              onBlur={() => setNotesFocused(false)}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, minHeight: 80, textAlignVertical: 'top' }]}
-            />
-
             {/* When to come back. Empty means nothing is owed. */}
             <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
               Next follow-up
@@ -452,12 +439,30 @@ export default function VisitFarmerScreen() {
                 <ThemedText type="linkPrimary">Done</ThemedText>
               </Pressable>
             )}
+            {/* What came of the visit. Required, and required whether or not a
+                date was set: a visit that leaves no word behind is a row in a
+                list that nobody can act on, and "no follow-up needed" is itself
+                worth writing down. */}
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.four }}>
+              Remarks from Farm visits 
+            </ThemedText>
             <TextInput
               value={followUpNote}
               onChangeText={setFollowUpNote}
-              placeholder="Why come back? (optional)"
+              placeholder="What did you find? Why come back?"
               placeholderTextColor={theme.textSecondary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+              multiline
+              onFocus={() => setNotesFocused(true)}
+              onBlur={() => setNotesFocused(false)}
+              style={[
+                styles.input,
+                {
+                  color: theme.text,
+                  backgroundColor: theme.backgroundElement,
+                  minHeight: 80,
+                  textAlignVertical: 'top',
+                },
+              ]}
             />
 
             {/* The two things most often needed while standing on the farm.
