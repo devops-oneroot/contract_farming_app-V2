@@ -4,7 +4,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Linking,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -17,7 +19,7 @@ import { FilterPicker } from '@/components/filter-picker';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Brand, Spacing } from '@/constants/theme';
+import { Brand, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
@@ -339,6 +341,31 @@ export default function ProductsGivenScreen() {
               After-photo due — tap to open {s.farmerName || 'the farmer'}
             </ThemedText>
           )}
+
+          {/* The bill for this one sale, at the foot of what it is a bill for.
+              Opened rather than fetched: the phone's browser downloads it and
+              can then share it straight to the buyer on WhatsApp.
+
+              Its own Pressable, so the card's press never fires for a tap
+              meant for the bill: a nested touchable claims the responder, and
+              the whole card is otherwise a link to the farmer's page. */}
+          <View style={styles.cardFoot}>
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                Linking.openURL(api.saleInvoicePdfUrl(s._id)).catch(() =>
+                  Alert.alert('Could not open the bill', 'Please try again.')
+                );
+              }}
+              hitSlop={8}
+              accessibilityLabel={`Download the bill for ${buyer.name}`}
+              style={({ pressed }) => [styles.billBtn, pressed && { opacity: 0.7 }]}>
+              <Ionicons name="download-outline" size={13} color={GREEN} />
+              <ThemedText type="small" style={styles.billBtnText}>
+                Download bill
+              </ThemedText>
+            </Pressable>
+          </View>
         </ThemedView>
       </Pressable>
     );
@@ -705,4 +732,17 @@ const styles = StyleSheet.create({
   thumb: { width: 24, height: 24, borderRadius: Spacing.half, backgroundColor: '#d8d8d8' },
   thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
   dueNote: { color: AMBER, fontWeight: '700', marginTop: Spacing.two, fontSize: 11 },
+  cardFoot: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: Spacing.two },
+  billBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 4,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: `${GREEN}55`,
+    backgroundColor: Brand.primarySurface,
+  },
+  billBtnText: { color: GREEN, fontWeight: '700', fontSize: 11 },
 });
