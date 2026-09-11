@@ -354,6 +354,8 @@ export type CallLog = {
  */
 export type ProductSaleItem = {
   product: string;
+  /** Which pack size, when the product has them; the size's label is in `unit`. */
+  variant?: string | null;
   name: string;
   unit: string;
   imageUrl: string;
@@ -418,6 +420,8 @@ export type ProductSale = {
   discount?: number;
   discountType?: 'rs' | 'pct';
   discountAmount?: number;
+  /** Courier / packaging / anything else charged on top, GST-inclusive. */
+  otherCharges?: number;
   _id: string;
   agronomist: string | AgronomistRef | null;
   agronomistName: string;
@@ -773,12 +777,22 @@ export type PackageOfPractices = {
   steps: PopStep[];
 };
 
+/**
+ * One pack size of a product with its own price — the 500 ml, 1 L and 5 L of
+ * the same pesticide. `label` is a name, not a quantity: nothing is computed
+ * from it.
+ */
+export type ProductVariant = { _id: string; label: string; price: number };
+
 export type Product = {
   _id: string;
   name: string;
   description: string;
+  /** Price and unit when sold in one size; not used once `variants` has entries. */
   price: number;
   unit: string;
+  /** The pack sizes this product comes in. Empty = sold in one size only. */
+  variants?: ProductVariant[];
   imageUrl: string;
   crops: string[];
   dayStart: number | null;
@@ -1446,6 +1460,8 @@ export const api = {
     /** Each product carries its own before-photo; the after comes a week later. */
     items: {
       productId: string;
+      /** Required by the server on a product that comes in sizes. */
+      variantId?: string | null;
       qty: number;
       unitPrice: number;
       /**
@@ -1460,6 +1476,8 @@ export const api = {
     /** A discount on the whole basket, on top of any per-product ones. */
     discount?: number;
     discountType?: 'rs' | 'pct';
+    /** Courier / packaging / other charges on top, in rupees. */
+    otherCharges?: number;
     latitude?: number | null;
     longitude?: number | null;
     notes?: string;
@@ -1481,13 +1499,15 @@ export const api = {
     if (body.cropName) form.append('cropName', body.cropName);
     if (body.discount) form.append('discount', String(body.discount));
     if (body.discountType) form.append('discountType', body.discountType);
+    if (body.otherCharges) form.append('otherCharges', String(body.otherCharges));
     if (body.cropId) form.append('cropId', body.cropId);
     // Multipart carries the photos, so the basket travels as a JSON string.
     form.append(
       'items',
       JSON.stringify(
-        body.items.map(({ productId, qty, unitPrice, discount, discountType }) => ({
+        body.items.map(({ productId, variantId, qty, unitPrice, discount, discountType }) => ({
           productId,
+          variantId: variantId ?? null,
           qty,
           unitPrice,
           discount,

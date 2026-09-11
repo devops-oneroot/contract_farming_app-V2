@@ -14,6 +14,7 @@ import {
   // file:// preview straight off the camera, which left the slots blank.
   Image as RNImage,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -58,6 +59,29 @@ type Line = {
 
 type DiscountType = 'rs' | 'pct';
 
+/**
+ * One thing that can go in the basket: a product sold in one size, or ONE size
+ * of a product that comes in several. The 500 ml and the 5 L of the same
+ * pesticide are two offers, and two lines on the bill.
+ *
+ * Shaped like a Product on purpose — `_id`, `name`, `unit`, `price`,
+ * `imageUrl` — so the basket, the photo slots and the totals read an offer
+ * exactly as they used to read a product. `unit` carries the size's label,
+ * which is what the bill prints after the name.
+ */
+type Offer = {
+  _id: string;
+  productId: string;
+  variantId: string | null;
+  name: string;
+  unit: string;
+  price: number;
+  imageUrl: string;
+};
+
+const offerId = (productId: string, variantId: string | null | undefined) =>
+  variantId ? `${productId}:${variantId}` : productId;
+
 const money = (n: number) =>
   `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -77,10 +101,15 @@ const dayLabel = (d: Date) =>
 
 /** GST on farm inputs: 5% in total, split evenly between CGST and SGST. */
 const GST_RATE = 0.05;
-const HALF_GST = 0.025;
+/**
+ * GST on courier and packaging: 18%. A different supply from the products it
+ * travels with, taxed at its own rate, so the bill carries it as its own
+ * group rather than folding it into the 5% line.
+ */
+const CHARGES_GST_RATE = 0.18;
 
 /**
- * The tax already inside a price.
+ * The tax already inside a price, at a given rate.
  *
  * The price on a product is what the farmer pays — the figure agreed out loud
  * on the farm — so the split works backwards out of it rather than adding to
@@ -90,10 +119,10 @@ const HALF_GST = 0.025;
  * SGST is taken as the remainder, not calculated again, so the three parts
  * always add back to the total instead of drifting a paisa on rounding.
  */
-function gstSplit(total: number) {
+function gstSplit(total: number, rate: number = GST_RATE) {
   const round = (n: number) => Math.round(n * 100) / 100;
-  const taxable = round(total / (1 + GST_RATE));
-  const cgst = round(taxable * HALF_GST);
+  const taxable = round(total / (1 + rate));
+  const cgst = round(taxable * (rate / 2));
   return { taxable, cgst, sgst: round(total - taxable - cgst) };
 }
 
@@ -154,7 +183,7 @@ export default function GiveProductScreen() {
   const router = useRouter();
   const posthog = usePostHog();
   const { user } = useAuth();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const params = useLocalSearchParams<{
@@ -204,6 +233,12 @@ export default function GiveProductScreen() {
 
   const [crops, setCrops] = useState<Crop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  /**
+   * The product whose detail sheet is open — what it is, what it is for, and
+   * every size with its price on one screen. The card is deliberately small;
+   * this is where someone goes to actually read about it.
+   */
+  const [detailFor, setDetailFor] = useState<Product | null>(null);
   const [past, setPast] = useState<ProductSale[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -221,6 +256,8 @@ export default function GiveProductScreen() {
    */
   const [saleDiscount, setSaleDiscount] = useState('');
   const [saleDiscountType, setSaleDiscountType] = useState<DiscountType>('rs');
+  /** Courier / packaging / other charges, as typed. Rupees, GST-inclusive. */
+  const [otherCharges, setOtherCharges] = useState('');
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const confirmScrollRef = useRef<ScrollView>(null);
@@ -235,6 +272,35 @@ export default function GiveProductScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const crop = crops.find((c) => c._id === cropId) ?? null;
+
+  /** Every product flattened to its sellable sizes. */
+  const offers = useMemo<Offer[]>(
+    () =>
+      products.flatMap((p): Offer[] =>
+        p.variants && p.variants.length > 0
+          ? p.variants.map((v) => ({
+              _id: offerId(p._id, v._id),
+              productId: p._id,
+              variantId: v._id,
+              name: p.name,
+              unit: v.label,
+              price: v.price,
+              imageUrl: p.imageUrl,
+            }))
+          : [
+              {
+                _id: p._id,
+                productId: p._id,
+                variantId: null,
+                name: p.name,
+                unit: p.unit,
+                price: p.price ?? 0,
+                imageUrl: p.imageUrl,
+              },
+            ]
+      ),
+    [products]
+  );
 
   useEffect(() => {
     if (!buyerId) return;
@@ -307,11 +373,14 @@ export default function GiveProductScreen() {
     );
     for (const sale of newestFirst) {
       for (const it of sale.items) {
-        const seen = byProduct.get(it.product);
+        // The 1 L and the 5 L of one product are two different things to have
+        // been given, so the size is part of the key.
+        const key = offerId(it.product, it.variant);
+        const seen = byProduct.get(key);
         // First time through is the most recent, so later ones only count.
         if (seen) seen.times += 1;
         else
-          byProduct.set(it.product, {
+          byProduct.set(key, {
             name: it.name,
             unit: it.unit,
             imageUrl: it.imageUrl,
@@ -324,7 +393,7 @@ export default function GiveProductScreen() {
     return [...byProduct.entries()].map(([id, v]) => ({ id, ...v }));
   }, [past]);
 
-  const inCart = products.filter((p) => cart[p._id]);
+  const inCart = offers.filter((o) => cart[o._id]);
   const itemCount = inCart.reduce((s, p) => s + cart[p._id].qty, 0);
   /**
    * What the basket comes to once every per-product discount is off, and then
@@ -345,7 +414,15 @@ export default function GiveProductScreen() {
       round(saleDiscountType === 'pct' ? (subtotal * Math.min(entered, 100)) / 100 : entered)
     );
   }, [subtotal, saleDiscount, saleDiscountType]);
-  const total = Math.round((subtotal - saleOff) * 100) / 100;
+  /**
+   * Courier, packaging, whatever else was charged on top of the products. Goes
+   * on AFTER the discount, so "10% off" is 10% off the products and never
+   * quietly shaves the delivery fee. The server adds it in the same place.
+   */
+  const charges = Math.max(0, Math.round((Number(otherCharges) || 0) * 100) / 100);
+  /** The products alone, after the discount — the 5% side of the bill. */
+  const goods = Math.round((subtotal - saleOff) * 100) / 100;
+  const total = Math.round((goods + charges) * 100) / 100;
   /**
    * The bill stated the way a GST invoice states it: every line ex-tax, the tax
    * added once at the bottom, and the last figure still the price agreed out
@@ -372,16 +449,27 @@ export default function GiveProductScreen() {
    *   taxable = total / 1.05      CGST = SGST = taxable x 2.5%
    *   taxable + CGST + SGST = total, to the paisa
    */
-  const tax = useMemo(() => gstSplit(total), [total]);
+  const tax = useMemo(() => gstSplit(goods), [goods]);
   const saleOffEx = Math.round((subtotalEx - tax.taxable) * 100) / 100;
+  /**
+   * The courier's own split, at 18%. The figure typed is what is charged, tax
+   * included, exactly as a product price is — and its ex-tax value is worked
+   * back out the same way, only at the courier's rate.
+   */
+  const chargesTax = useMemo(() => gstSplit(charges, CHARGES_GST_RATE), [charges]);
+  const chargesEx = chargesTax.taxable;
+  /** Everything the tax was charged on, both rates together. */
+  const taxableAll = Math.round((tax.taxable + chargesEx) * 100) / 100;
+  const gstAll =
+    Math.round((tax.cgst + tax.sgst + chargesTax.cgst + chargesTax.sgst) * 100) / 100;
 
-  const add = (p: Product) =>
+  const add = (o: Offer) =>
     setCart((c) => ({
       ...c,
-      [p._id]: { qty: 1, price: String(p.price ?? 0), discount: '', discountType: 'rs', before: null },
+      [o._id]: { qty: 1, price: String(o.price ?? 0), discount: '', discountType: 'rs', before: null },
     }));
 
-  const setQty = (p: Product, qty: number) =>
+  const setQty = (p: Offer, qty: number) =>
     setCart((c) => {
       if (qty <= 0) {
         const { [p._id]: _drop, ...rest } = c;
@@ -435,7 +523,11 @@ export default function GiveProductScreen() {
       return;
     }
     if (missingPhotos.length) {
-      setError(`Take a before photo for ${missingPhotos.map((p) => p.name).join(', ')}.`);
+      setError(
+        `Take a before photo for ${missingPhotos
+          .map((p) => (p.variantId ? `${p.name} ${p.unit}` : p.name))
+          .join(', ')}.`
+      );
       return;
     }
     // Asked for, never assumed. Defaulting to today would quietly file the
@@ -465,7 +557,8 @@ export default function GiveProductScreen() {
             ? { uri: await shrink(line.before), name: `before_${i}.jpg`, type: 'image/jpeg' }
             : undefined;
           return {
-            productId: p._id,
+            productId: p.productId,
+            variantId: p.variantId,
             qty: line.qty,
             unitPrice: Number(line.price) || 0,
             discount: Math.max(0, Number(line.discount) || 0),
@@ -485,6 +578,7 @@ export default function GiveProductScreen() {
         items,
         discount: Math.max(0, Number(saleDiscount) || 0),
         discountType: saleDiscountType,
+        otherCharges: charges,
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
@@ -759,66 +853,247 @@ export default function GiveProductScreen() {
                 ) : (
                   <View style={styles.grid}>
                     {shown.map((p) => {
-                      const line = cart[p._id];
+                      /**
+                       * One card per product, laid out the way the grocery
+                       * apps the agents already use lay theirs out: ADD sits
+                       * on the picture, the price comes first under it as a
+                       * badge, then the name, then the sizes.
+                       *
+                       * A product in one size adds straight from the card and
+                       * the button becomes its stepper. A product in several
+                       * says "3 options" on the button and opens the sheet,
+                       * where every size has its own ADD — the card never
+                       * guesses which size was meant.
+                       */
+                      const rows = offers.filter((o) => o.productId === p._id);
+                      const single = rows[0];
+                      if (!single) return null;
+                      const multi = rows.length > 1;
+                      const held = rows.filter((o) => cart[o._id]);
+                      const heldQty = held.reduce((s, o) => s + cart[o._id].qty, 0);
+                      const cheapest = Math.min(...rows.map((o) => o.price ?? 0));
+                      // The one size in the basket, when exactly one is: it
+                      // can be stepped from the card. Two or more cannot, so
+                      // the button goes back to the sheet.
+                      const sole = held.length === 1 ? held[0] : null;
                       return (
                         <View
                           key={p._id}
                           style={[styles.card, { width: cardW, backgroundColor: theme.backgroundElement }]}>
-                          {/* `contain` on a plain well, not `cover`.
-                              A product photo is a bag or a bottle shot square
-                              on, so cropping it to fill the box cut the top and
-                              bottom off the very thing being chosen — the
-                              label. Fitting it whole means some cards show a
-                              band of background, which is the right trade when
-                              the picture is what the agronomist is reading. */}
-                          <View style={[styles.cardImgWrap, { backgroundColor: theme.background }]}>
-                            {p.imageUrl ? (
-                              <TappablePhoto
-                                uri={p.imageUrl}
-                                caption={p.name}
-                                style={styles.cardImg}
-                                contentFit="contain"
-                              />
-                            ) : (
-                              <Ionicons name="cube-outline" size={30} color={GREEN} />
-                            )}
-                          </View>
-                          <ThemedText type="smallBold" numberOfLines={2} style={styles.cardName}>
-                            {p.name}
-                          </ThemedText>
-                          {p.unit ? (
-                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                              {p.unit}
-                            </ThemedText>
-                          ) : null}
-                          <View style={styles.cardBottom}>
-                            <ThemedText type="smallBold">{money(p.price ?? 0)}</ThemedText>
-                            {line ? (
-                              <View style={[styles.stepper, { borderColor: GREEN }]}>
-                                <Pressable onPress={() => setQty(p, line.qty - 1)} hitSlop={6} style={styles.stepBtn}>
-                                  <Ionicons name="remove" size={16} color={GREEN} />
-                                </Pressable>
-                                <ThemedText type="smallBold" style={{ color: GREEN, minWidth: 18, textAlign: 'center' }}>
-                                  {line.qty}
-                                </ThemedText>
-                                <Pressable onPress={() => setQty(p, line.qty + 1)} hitSlop={6} style={styles.stepBtn}>
-                                  <Ionicons name="add" size={16} color={GREEN} />
-                                </Pressable>
+                          <Pressable onPress={() => setDetailFor(p)} style={({ pressed }) => pressed && { opacity: 0.85 }}>
+                            {/* `contain` on a plain well, not `cover`: a bag
+                                or a bottle shot square on loses its label to a
+                                crop, and the label is what is being chosen. */}
+                            <View style={[styles.cardImgWrap, { backgroundColor: theme.background }]}>
+                              {p.imageUrl ? (
+                                <Image source={{ uri: p.imageUrl }} style={styles.cardImg} contentFit="contain" />
+                              ) : (
+                                <Ionicons name="cube-outline" size={30} color={GREEN} />
+                              )}
+                              <View style={styles.overlay}>
+                                {heldQty === 0 ? (
+                                  <Pressable
+                                    onPress={() => (multi ? setDetailFor(p) : add(single))}
+                                    style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}>
+                                    <ThemedText type="small" style={styles.addText}>
+                                      ADD
+                                    </ThemedText>
+                                    {multi ? (
+                                      <ThemedText style={styles.addSub}>{rows.length} options</ThemedText>
+                                    ) : null}
+                                  </Pressable>
+                                ) : sole ? (
+                                  <View style={styles.stepWrap}>
+                                    <View style={styles.stepper}>
+                                      <Pressable onPress={() => setQty(sole, cart[sole._id].qty - 1)} hitSlop={6} style={styles.stepBtn}>
+                                        <Ionicons name="remove" size={16} color="#fff" />
+                                      </Pressable>
+                                      <ThemedText type="smallBold" style={styles.stepCount}>
+                                        {cart[sole._id].qty}
+                                      </ThemedText>
+                                      <Pressable onPress={() => setQty(sole, cart[sole._id].qty + 1)} hitSlop={6} style={styles.stepBtn}>
+                                        <Ionicons name="add" size={16} color="#fff" />
+                                      </Pressable>
+                                    </View>
+                                    {/* Which size the stepper is counting —
+                                        without it, on a product in three
+                                        sizes, "2" says nothing. */}
+                                    {multi ? (
+                                      <View style={styles.stepSize}>
+                                        <ThemedText style={styles.stepSizeText}>{sole.unit}</ThemedText>
+                                      </View>
+                                    ) : null}
+                                  </View>
+                                ) : (
+                                  <Pressable
+                                    onPress={() => setDetailFor(p)}
+                                    style={({ pressed }) => [styles.heldBtn, pressed && { opacity: 0.85 }]}>
+                                    <ThemedText type="small" style={styles.heldText}>
+                                      {heldQty} added
+                                    </ThemedText>
+                                    <ThemedText style={[styles.addSub, { color: '#fff' }]}>
+                                      {held.length} sizes · edit
+                                    </ThemedText>
+                                  </Pressable>
+                                )}
                               </View>
-                            ) : (
-                              <Pressable onPress={() => add(p)} style={[styles.addBtn, { borderColor: GREEN }]}>
-                                <ThemedText type="small" style={{ color: GREEN, fontWeight: '800' }}>
-                                  ADD
-                                </ThemedText>
-                              </Pressable>
-                            )}
+                            </View>
+                          </Pressable>
+
+                          <View style={styles.priceRow}>
+                            <View style={styles.pricePill}>
+                              <ThemedText style={styles.pricePillText}>{money(cheapest)}</ThemedText>
+                            </View>
+                            {multi ? (
+                              <ThemedText type="small" themeColor="textSecondary" style={styles.onwards}>
+                                onwards
+                              </ThemedText>
+                            ) : null}
                           </View>
+                          <Pressable onPress={() => setDetailFor(p)}>
+                            <ThemedText type="smallBold" numberOfLines={2} style={styles.cardName}>
+                              {p.name}
+                            </ThemedText>
+                            {/* The sizes on offer, or the unit of the one size. */}
+                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.cardMeta}>
+                              {multi ? rows.map((o) => o.unit).join(' · ') : single.unit || ' '}
+                            </ThemedText>
+                          </Pressable>
                         </View>
                       );
                     })}
                   </View>
                 )}
               </ScrollView>
+
+              {/* The options sheet: the product, then every size as its own
+                  row with its price and its own ADD. Opened by the card's ADD
+                  on a product with sizes, and by the picture or name on any
+                  product — it is also where the full description lives. */}
+              <Modal
+                visible={!!detailFor}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setDetailFor(null)}>
+                <Pressable style={styles.backdrop} onPress={() => setDetailFor(null)}>
+                  {/* Swallows taps meant for the sheet so they do not reach the
+                      backdrop and close it. */}
+                  <Pressable onPress={() => {}}>
+                    <View style={[styles.sheet, { backgroundColor: theme.background }]}>
+                      <View style={styles.sheetHandle} />
+                      {detailFor
+                        ? (() => {
+                            const p = detailFor;
+                            const rows = offers.filter((o) => o.productId === p._id);
+                            const heldQty = rows.reduce((s, o) => s + (cart[o._id]?.qty ?? 0), 0);
+                            return (
+                              <>
+                                <View style={styles.sheetHead}>
+                                  <View style={[styles.sheetThumb, { backgroundColor: theme.backgroundElement }]}>
+                                    {p.imageUrl ? (
+                                      <TappablePhoto uri={p.imageUrl} caption={p.name} style={styles.fillImg} contentFit="contain" />
+                                    ) : (
+                                      <Ionicons name="cube-outline" size={28} color={GREEN} />
+                                    )}
+                                  </View>
+                                  <View style={{ flex: 1, minWidth: 0 }}>
+                                    <ThemedText type="subtitle">{p.name}</ThemedText>
+                                    {p.description ? (
+                                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={3}>
+                                        {p.description}
+                                      </ThemedText>
+                                    ) : null}
+                                    {p.crops && p.crops.length > 0 ? (
+                                      <View style={styles.forRow}>
+                                        {p.crops.map((c) => (
+                                          <View key={c} style={styles.forChip}>
+                                            <ThemedText type="small" style={styles.forChipText}>
+                                              {c}
+                                            </ThemedText>
+                                          </View>
+                                        ))}
+                                      </View>
+                                    ) : null}
+                                  </View>
+                                  <Pressable onPress={() => setDetailFor(null)} hitSlop={10} style={styles.sheetClose}>
+                                    <Ionicons name="close" size={18} color={theme.text} />
+                                  </Pressable>
+                                </View>
+
+                                <ThemedText type="smallBold" style={{ marginTop: Spacing.four, marginBottom: Spacing.two }}>
+                                  {rows.length > 1 ? `Choose size · ${rows.length} options` : 'Price'}
+                                </ThemedText>
+                                <ScrollView style={{ maxHeight: height * 0.5 }} showsVerticalScrollIndicator={false}>
+                                  {rows.map((o) => {
+                                    const line = cart[o._id];
+                                    return (
+                                      <View
+                                        key={o._id}
+                                        style={[
+                                          styles.optionRow,
+                                          {
+                                            borderColor: line ? GREEN : theme.backgroundElement,
+                                            backgroundColor: line ? Brand.primarySurface : theme.background,
+                                          },
+                                        ]}>
+                                        <View style={[styles.optionImg, { backgroundColor: theme.backgroundElement }]}>
+                                          {p.imageUrl ? (
+                                            <Image source={{ uri: p.imageUrl }} style={styles.fillImg} contentFit="contain" />
+                                          ) : (
+                                            <Ionicons name="cube-outline" size={20} color={GREEN} />
+                                          )}
+                                        </View>
+                                        <View style={{ flex: 1, minWidth: 0 }}>
+                                          <ThemedText type="smallBold">
+                                            {o.unit || (rows.length > 1 ? 'Standard' : '1 pack')}
+                                          </ThemedText>
+                                          <ThemedText style={styles.optionPrice}>{money(o.price)}</ThemedText>
+                                          {line ? (
+                                            <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                                              {line.qty} added · {money(line.qty * o.price)}
+                                            </ThemedText>
+                                          ) : null}
+                                        </View>
+                                        {line ? (
+                                          <View style={styles.stepper}>
+                                            <Pressable onPress={() => setQty(o, line.qty - 1)} hitSlop={6} style={styles.stepBtn}>
+                                              <Ionicons name="remove" size={16} color="#fff" />
+                                            </Pressable>
+                                            <ThemedText type="smallBold" style={styles.stepCount}>
+                                              {line.qty}
+                                            </ThemedText>
+                                            <Pressable onPress={() => setQty(o, line.qty + 1)} hitSlop={6} style={styles.stepBtn}>
+                                              <Ionicons name="add" size={16} color="#fff" />
+                                            </Pressable>
+                                          </View>
+                                        ) : (
+                                          <Pressable
+                                            onPress={() => add(o)}
+                                            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}>
+                                            <ThemedText type="small" style={styles.addText}>
+                                              ADD
+                                            </ThemedText>
+                                          </Pressable>
+                                        )}
+                                      </View>
+                                    );
+                                  })}
+                                </ScrollView>
+                                <Pressable
+                                  onPress={() => setDetailFor(null)}
+                                  style={({ pressed }) => [styles.sheetDone, pressed && { opacity: 0.85 }]}>
+                                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                                    {heldQty > 0 ? `Done · ${heldQty} added` : 'Close'}
+                                  </ThemedText>
+                                </Pressable>
+                              </>
+                            );
+                          })()
+                        : null}
+                    </View>
+                  </Pressable>
+                </Pressable>
+              </Modal>
 
               {/* Sticky basket bar — the way out of this step. */}
               {inCart.length > 0 && (
@@ -898,7 +1173,16 @@ export default function GiveProductScreen() {
                         <ThemedText type="smallBold" numberOfLines={2}>
                           {p.name}
                         </ThemedText>
-                        {p.unit ? (
+                        {/* A size is a pill, a plain unit is a caption: two
+                            lines of "Nutri Boost" need the 1 L and the 5 L to
+                            jump out, where "per 5 kg" only needs to be read. */}
+                        {p.variantId ? (
+                          <View style={styles.itemSize}>
+                            <ThemedText type="small" style={styles.itemSizeText}>
+                              {p.unit}
+                            </ThemedText>
+                          </View>
+                        ) : p.unit ? (
                           <ThemedText type="small" themeColor="textSecondary" style={styles.itemUnit}>
                             {p.unit}
                           </ThemedText>
@@ -1063,6 +1347,42 @@ export default function GiveProductScreen() {
                   come to, what came off, what is taxable, the tax itself, and
                   the one figure the farmer actually pays. */}
               <View style={[styles.billCard, { borderColor: theme.backgroundElement }]}>
+                {/* Courier, packaging, anything else on top of the products.
+                    Same two-field shape as the discount panel below: what was
+                    typed on the left, what it is worth ex-GST on the right, so
+                    the column of ex-tax figures still adds up to Taxable Value. */}
+                <View style={styles.discPanel}>
+                  <View style={styles.discHead}>
+                    <Ionicons name="cube-outline" size={14} color={GREEN} />
+                    <ThemedText type="smallBold" style={[styles.discTitle, { color: GREEN }]}>
+                      Courier / Other Charges
+                    </ThemedText>
+                  </View>
+                  <View style={styles.discFields}>
+                    <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                        Charges (₹)
+                      </ThemedText>
+                      <TextInput
+                        value={otherCharges}
+                        onChangeText={setOtherCharges}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={theme.textSecondary}
+                        style={[styles.discFieldInput, { color: theme.text }]}
+                      />
+                    </View>
+                    <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                        Excl. 18% GST
+                      </ThemedText>
+                      <ThemedText style={[styles.discFieldValue, { color: GREEN }]}>
+                        {chargesEx > 0 ? `+ ${money(chargesEx)}` : money(0)}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
+
                 <View style={styles.billRow}>
                   <ThemedText type="small" themeColor="textSecondary">
                     Subtotal
@@ -1132,7 +1452,7 @@ export default function GiveProductScreen() {
 
                 <View style={styles.billRow}>
                   <ThemedText type="smallBold">Taxable Value</ThemedText>
-                  <ThemedText type="smallBold">{money(tax.taxable)}</ThemedText>
+                  <ThemedText type="smallBold">{money(taxableAll)}</ThemedText>
                 </View>
 
                 {/* GST spelled out as a table, because that is how it appears
@@ -1155,19 +1475,28 @@ export default function GiveProductScreen() {
                       </ThemedText>
                     ))}
                   </View>
+                  {/* Two groups when there is a courier fee: the products at
+                      2.5% + 2.5%, the courier at 9% + 9%. Each pair shows its
+                      own taxable value, since the rate applies to that alone. */}
                   {[
-                    { type: 'CGST', amount: tax.cgst },
-                    { type: 'SGST', amount: tax.sgst },
+                    { key: 'cgst5', type: 'CGST', rate: '2.5%', on: tax.taxable, amount: tax.cgst },
+                    { key: 'sgst5', type: 'SGST', rate: '2.5%', on: tax.taxable, amount: tax.sgst },
+                    ...(charges > 0
+                      ? [
+                          { key: 'cgst18', type: 'CGST', rate: '9%', on: chargesEx, amount: chargesTax.cgst },
+                          { key: 'sgst18', type: 'SGST', rate: '9%', on: chargesEx, amount: chargesTax.sgst },
+                        ]
+                      : []),
                   ].map((r) => (
-                    <View key={r.type} style={styles.gstRow}>
+                    <View key={r.key} style={styles.gstRow}>
                       <ThemedText type="small" style={styles.gstCell}>
                         {r.type}
                       </ThemedText>
                       <ThemedText type="small" style={styles.gstCell}>
-                        2.5%
+                        {r.rate}
                       </ThemedText>
                       <ThemedText type="small" style={[styles.gstCell, styles.gstCellRight]}>
-                        {money(tax.taxable)}
+                        {money(r.on)}
                       </ThemedText>
                       <ThemedText type="small" style={[styles.gstCell, styles.gstCellRight]}>
                         {money(r.amount)}
@@ -1179,7 +1508,7 @@ export default function GiveProductScreen() {
                       Total GST
                     </ThemedText>
                     <ThemedText type="smallBold" style={[styles.gstCell, styles.gstCellRight, { color: GREEN }]}>
-                      {money(Math.round((tax.cgst + tax.sgst) * 100) / 100)}
+                      {money(gstAll)}
                     </ThemedText>
                   </View>
                 </View>
@@ -1286,6 +1615,15 @@ const styles = StyleSheet.create({
   },
   fillImg: { width: '100%', height: '100%' },
   itemUnit: { fontSize: 11 },
+  itemSize: {
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    borderRadius: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 1,
+    backgroundColor: Brand.primarySurface,
+  },
+  itemSizeText: { fontSize: 11, fontWeight: '800', color: GREEN },
   /** Qty / Rate / Amount — the three columns an invoice line is read in. */
   qrarow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two },
   qraCell: { flex: 1, gap: 3 },
@@ -1460,6 +1798,111 @@ const styles = StyleSheet.create({
   },
   cardImg: { width: '100%', height: '100%' },
   cardName: { fontSize: 13, lineHeight: 17 },
+  cardMeta: { fontSize: 11, lineHeight: 14, marginTop: 1 },
+  /** Bottom-right of the picture, where the thumb lands. */
+  overlay: { position: 'absolute', right: 6, bottom: 6, alignItems: 'flex-end' },
+  addText: { color: GREEN, fontWeight: '800', letterSpacing: 0.3 },
+  addSub: { fontSize: 10, lineHeight: 12, color: GREEN, fontWeight: '600' },
+  /** Two or more sizes of one product are in: the card sends you back to the sheet. */
+  heldBtn: {
+    alignItems: 'center',
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 5,
+    backgroundColor: GREEN,
+  },
+  heldText: { color: '#fff', fontWeight: '800' },
+  stepWrap: { alignItems: 'center', gap: 3 },
+  stepCount: { color: '#fff', minWidth: 20, textAlign: 'center' },
+  stepSize: {
+    borderRadius: Spacing.one,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    backgroundColor: '#fff',
+  },
+  stepSizeText: { fontSize: 10, lineHeight: 12, fontWeight: '800', color: GREEN },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one, marginTop: Spacing.two },
+  /** The price as a badge, first thing under the picture. */
+  pricePill: {
+    borderRadius: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+    backgroundColor: GREEN,
+  },
+  pricePillText: { color: '#fff', fontWeight: '800', fontSize: 14, lineHeight: 18 },
+  onwards: { fontSize: 11 },
+  sheetHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  sheetThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: Spacing.two,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+  },
+  /** One size, one row: thumbnail, size and price, its own ADD. */
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    borderWidth: 1.5,
+    borderRadius: Spacing.three,
+    padding: Spacing.two,
+    marginBottom: Spacing.two,
+  },
+  optionImg: {
+    width: 56,
+    height: 56,
+    borderRadius: Spacing.two,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  optionPrice: { fontSize: 16, fontWeight: '800', lineHeight: 20 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheet: {
+    borderTopLeftRadius: Spacing.five,
+    borderTopRightRadius: Spacing.five,
+    padding: Spacing.four,
+    paddingBottom: Spacing.five,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    alignSelf: 'center',
+    marginBottom: Spacing.three,
+  },
+  forRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.one,
+    marginTop: Spacing.two,
+  },
+  forChip: {
+    borderRadius: Spacing.one,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+    backgroundColor: Brand.primarySurface,
+  },
+  forChipText: { fontSize: 11, fontWeight: '700', color: GREEN },
+  sheetDone: {
+    marginTop: Spacing.three,
+    borderRadius: Spacing.three,
+    paddingVertical: Spacing.three,
+    alignItems: 'center',
+    backgroundColor: GREEN,
+  },
   cardBottom: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1467,18 +1910,19 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
   },
   addBtn: {
+    alignItems: 'center',
     borderWidth: 1.5,
+    borderColor: GREEN,
     borderRadius: Spacing.two,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.one,
-    backgroundColor: Brand.primarySurface,
+    paddingVertical: 5,
+    backgroundColor: '#fff',
   },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1.5,
     borderRadius: Spacing.two,
-    backgroundColor: Brand.primarySurface,
+    backgroundColor: GREEN,
   },
   stepBtn: { paddingHorizontal: Spacing.two, paddingVertical: Spacing.one },
   cartBar: {
