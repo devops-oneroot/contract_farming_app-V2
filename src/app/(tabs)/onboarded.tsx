@@ -169,7 +169,19 @@ export default function OnboardedScreen() {
   // Narrow the list to when people were registered. Null = show everything.
   const [dateFilter, setDateFilter] = useState<DateFilter | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * Which date the calendar is being opened for: one exact day, or either
+   * end of a range. One picker, three jobs — a second DateTimePicker on the
+   * sheet would fight the first for the screen on Android.
+   */
+  const [pickerFor, setPickerFor] = useState<'day' | 'from' | 'to' | null>(null);
+  /**
+   * The two ends of a custom range while they are being chosen. Applied only
+   * when both are set and the agent taps Apply, so half a range never narrows
+   * the list.
+   */
+  const [rangeFrom, setRangeFrom] = useState<Date | null>(null);
+  const [rangeTo, setRangeTo] = useState<Date | null>(null);
   /**
    * Whose farmers to show, by the agronomist who registered them. Null is
    * everyone's.
@@ -210,6 +222,11 @@ export default function OnboardedScreen() {
     async (q: string, range: DateFilter | null, by: string | null) => {
       if (!user) return;
       const id = ++reqId.current;
+      // Every reload — a new filter, a new search, a pull to refresh — clears
+      // the list to a spinner. This used to leave the OLD rows on screen for
+      // the second or two the request took, so applying a date range looked
+      // like it had done nothing, and then the numbers changed by themselves.
+      setLoading(true);
       // Search, date window and scope are all applied by the server, so what
       // arrives is already exactly what the list should show.
       const window = range ? { from: range.from, to: range.to } : undefined;
@@ -439,7 +456,9 @@ export default function OnboardedScreen() {
             // The server's count of everything matching the filters. Using how
             // many are loaded would freeze at 10 and then climb as the agent
             // scrolled, which reads as records appearing out of nowhere.
-            const count = k === 'farmers' ? farmerPage.total : aggPage.total;
+            // The old total would sit on the tab while the new one is fetched,
+            // and a number that is about to change is worse than none.
+            const count = loading ? '…' : k === 'farmers' ? farmerPage.total : aggPage.total;
             // Farmers are green (crops), aggregators terracotta (the buyer side).
             const tint = k === 'farmers' ? GREEN : CLAY;
             return (
@@ -473,7 +492,18 @@ export default function OnboardedScreen() {
             />
           }>
           {loading ? (
-            <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={GREEN} />
+              {/* Says what is being fetched, so a filter that takes a moment
+                  reads as "working on it" rather than "did that do anything?". */}
+              <ThemedText type="small" themeColor="textSecondary">
+                {searching
+                  ? `Searching ${tab} for “${search}”…`
+                  : dateFilter
+                    ? `Loading ${tab} registered ${dateFilter.label}…`
+                    : `Loading ${tab}…`}
+              </ThemedText>
+            </View>
           ) : list.length === 0 ? (
             <ThemedView type="backgroundElement" style={styles.empty}>
               <Ionicons name="people-outline" size={40} color={theme.textSecondary} />
@@ -680,7 +710,7 @@ export default function OnboardedScreen() {
             </View>
 
             <Pressable
-              onPress={() => setPickerOpen(true)}
+              onPress={() => setPickerFor('day')}
               style={({ pressed }) => [
                 styles.pickDate,
                 { backgroundColor: theme.backgroundElement },
@@ -696,14 +726,88 @@ export default function OnboardedScreen() {
               <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
             </Pressable>
 
-            {pickerOpen ? (
+            {/* A range of the agent's own choosing: from one date to another.
+                The count on the tab is the server's total for the window, so
+                "how many did we onboard between these dates" is answered the
+                moment it is applied. */}
+            <View style={[styles.pickDate, { backgroundColor: theme.backgroundElement }]}>
+              <Ionicons name="calendar-number-outline" size={18} color={GREEN} />
+              <View style={{ flex: 1, gap: Spacing.two }}>
+                <ThemedText type="smallBold">Pick a date range</ThemedText>
+                <View style={styles.rangeRow}>
+                  {(['from', 'to'] as const).map((end) => {
+                    const value = end === 'from' ? rangeFrom : rangeTo;
+                    return (
+                      <Pressable
+                        key={end}
+                        onPress={() => setPickerFor(end)}
+                        style={({ pressed }) => [
+                          styles.rangeField,
+                          {
+                            backgroundColor: theme.background,
+                            borderColor: value ? GREEN : 'transparent',
+                          },
+                          pressed && { opacity: 0.85 },
+                        ]}>
+                        <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                          {end === 'from' ? 'From' : 'To'}
+                        </ThemedText>
+                        <ThemedText
+                          type="smallBold"
+                          style={{ color: value ? theme.text : theme.textSecondary }}>
+                          {value ? fmtDate(value.toISOString()) : 'Select'}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable
+                  disabled={!rangeFrom || !rangeTo}
+                  onPress={() => {
+                    if (!rangeFrom || !rangeTo) return;
+                    // Whichever was tapped first is the start; nobody should
+                    // have to know that before choosing.
+                    const [a, b] =
+                      rangeFrom <= rangeTo ? [rangeFrom, rangeTo] : [rangeTo, rangeFrom];
+                    setDateFilter({
+                      label: `${fmtDate(a.toISOString())} – ${fmtDate(b.toISOString())}`,
+                      from: startOfDay(a),
+                      to: endOfDay(b),
+                    });
+                    setFilterOpen(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.applyBtn,
+                    (!rangeFrom || !rangeTo) && { opacity: 0.4 },
+                    pressed && { opacity: 0.85 },
+                  ]}>
+                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                    Apply range
+                  </ThemedText>
+                </Pressable>
+              </View>
+            </View>
+
+            {pickerFor ? (
               <DateTimePicker
-                value={dateFilter ? dateFilter.from : new Date()}
+                value={
+                  pickerFor === 'from'
+                    ? (rangeFrom ?? new Date())
+                    : pickerFor === 'to'
+                      ? (rangeTo ?? new Date())
+                      : (dateFilter?.from ?? new Date())
+                }
                 mode="date"
                 maximumDate={new Date()}
                 onChange={(event, selected) => {
-                  if (Platform.OS !== 'ios') setPickerOpen(false);
-                  if (event.type === 'set' && selected) {
+                  const which = pickerFor;
+                  if (Platform.OS !== 'ios') setPickerFor(null);
+                  if (event.type !== 'set' || !selected) return;
+                  if (which === 'from') {
+                    setRangeFrom(selected);
+                  } else if (which === 'to') {
+                    setRangeTo(selected);
+                  } else {
                     setDateFilter({
                       label: fmtDate(selected.toISOString()),
                       from: startOfDay(selected),
@@ -714,11 +818,15 @@ export default function OnboardedScreen() {
                 }}
               />
             ) : null}
-            {Platform.OS === 'ios' && pickerOpen ? (
+            {Platform.OS === 'ios' && pickerFor ? (
               <Pressable
                 onPress={() => {
-                  setPickerOpen(false);
-                  setFilterOpen(false);
+                  // Picking one end of a range stays on the sheet so the other
+                  // end can be picked; an exact day is the whole answer and
+                  // closes it.
+                  const wasDay = pickerFor === 'day';
+                  setPickerFor(null);
+                  if (wasDay) setFilterOpen(false);
                 }}
                 style={styles.doneBtn}>
                 <ThemedText type="linkPrimary">Done</ThemedText>
@@ -729,6 +837,8 @@ export default function OnboardedScreen() {
               <Pressable
                 onPress={() => {
                   setDateFilter(null);
+                  setRangeFrom(null);
+                  setRangeTo(null);
                   setFilterOpen(false);
                 }}
                 style={({ pressed }) => [styles.clearBtn, pressed && { opacity: 0.85 }]}>
@@ -746,6 +856,7 @@ export default function OnboardedScreen() {
 
 const styles = StyleSheet.create({
   listFoot: { alignItems: 'center', paddingVertical: Spacing.four, gap: Spacing.two },
+  loadingWrap: { alignItems: 'center', gap: Spacing.three, marginTop: Spacing.six },
   footRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   loadMoreBtn: {
     flexDirection: 'row',
@@ -847,6 +958,21 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Spacing.three,
     marginTop: Spacing.three,
+  },
+  rangeRow: { flexDirection: 'row', gap: Spacing.two },
+  rangeField: {
+    flex: 1,
+    gap: 2,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1.5,
+  },
+  applyBtn: {
+    alignItems: 'center',
+    paddingVertical: Spacing.two + 2,
+    borderRadius: Spacing.two,
+    backgroundColor: GREEN,
   },
   doneBtn: { alignSelf: 'flex-end', padding: Spacing.two },
   clearBtn: { alignItems: 'center', paddingVertical: Spacing.three, marginTop: Spacing.two },

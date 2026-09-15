@@ -47,7 +47,14 @@ type Step = 'pick' | 'confirm';
  */
 type Line = {
   qty: number;
+  /** The catalog price for this size, as listed. Shown, never edited. */
   price: string;
+  /**
+   * The rate actually agreed on the field, when it differs from the catalog.
+   * Empty means "charge the catalog price". Kept as a string like the discount,
+   * so the box can be cleared mid-edit without snapping to 0.
+   */
+  landingRate: string;
   /**
    * A discount on this product, as typed. Kept as a string so the field can be
    * empty while being edited rather than snapping to 0 on every keystroke.
@@ -134,13 +141,36 @@ function gstSplit(total: number, rate: number = GST_RATE) {
  * server caps it the same way and recomputes from scratch, so this is what the
  * agronomist sees rather than what anyone is charged on.
  */
+/**
+ * The rate a line is charged at: the landing rate when one was entered, else
+ * the catalog price. Nothing else on this screen may pick between the two.
+ */
+function rateOf(line: Line) {
+  const landing = Number(line.landingRate);
+  return landing > 0 ? landing : Number(line.price) || 0;
+}
+
+/**
+ * A rupee discount on a line is PER UNIT — "₹10 off" means ₹10 off each one,
+ * so it grows with the quantity the way a percentage already does. Typed once,
+ * it stays right when the agronomist bumps the count afterwards.
+ */
+function lineDiscountTotal(line: Line) {
+  const entered = Math.max(0, Number(line.discount) || 0);
+  return line.discountType === 'pct' ? entered : entered * line.qty;
+}
+
 function lineMath(line: Line) {
   const round = (n: number) => Math.round(n * 100) / 100;
-  const gross = round(line.qty * (Number(line.price) || 0));
+  const gross = round(line.qty * rateOf(line));
   const entered = Math.max(0, Number(line.discount) || 0);
   const off = Math.min(
     gross,
-    round(line.discountType === 'pct' ? (gross * Math.min(entered, 100)) / 100 : entered)
+    round(
+      line.discountType === 'pct'
+        ? (gross * Math.min(entered, 100)) / 100
+        : lineDiscountTotal(line)
+    )
   );
   return { gross, off, net: round(gross - off) };
 }
@@ -466,7 +496,14 @@ export default function GiveProductScreen() {
   const add = (o: Offer) =>
     setCart((c) => ({
       ...c,
-      [o._id]: { qty: 1, price: String(o.price ?? 0), discount: '', discountType: 'rs', before: null },
+      [o._id]: {
+        qty: 1,
+        price: String(o.price ?? 0),
+        landingRate: '',
+        discount: '',
+        discountType: 'rs',
+        before: null,
+      },
     }));
 
   const setQty = (p: Offer, qty: number) =>
@@ -480,6 +517,9 @@ export default function GiveProductScreen() {
 
   const setDiscount = (id: string, discount: string) =>
     setCart((c) => ({ ...c, [id]: { ...c[id], discount } }));
+
+  const setLandingRate = (id: string, landingRate: string) =>
+    setCart((c) => ({ ...c, [id]: { ...c[id], landingRate } }));
 
   /**
    * Switching between rupees and percent keeps the number typed. Clearing it
@@ -560,8 +600,14 @@ export default function GiveProductScreen() {
             productId: p.productId,
             variantId: p.variantId,
             qty: line.qty,
-            unitPrice: Number(line.price) || 0,
-            discount: Math.max(0, Number(line.discount) || 0),
+            // The server honours this as an override of the catalog price,
+            // which is exactly what the farmer/FPO rate is.
+            unitPrice: rateOf(line),
+            // The server's rupee discount is the total off the LINE, and so is
+            // every sale already stored, the dashboard and the printed bill.
+            // Only this screen thinks per unit, so the multiplication happens
+            // here, once, on the way out.
+            discount: lineDiscountTotal(line),
             discountType: line.discountType,
             ...(before ? { beforePhoto: before } : {}),
           };
@@ -1203,7 +1249,7 @@ export default function GiveProductScreen() {
                         <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
                           Qty
                         </ThemedText>
-                        <View style={[styles.stepper, { borderColor: GREEN }]}>
+                        <View style={styles.stepperOutline}>
                           <Pressable onPress={() => setQty(p, line.qty - 1)} hitSlop={6} style={styles.stepBtn}>
                             <Ionicons name="remove" size={15} color={GREEN} />
                           </Pressable>
@@ -1219,14 +1265,18 @@ export default function GiveProductScreen() {
                         <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
                           Rate
                         </ThemedText>
-                        {/* The catalog price, shown not typed. It used to be an
-                            input, which meant the price a farmer was charged
-                            could differ from the price the company set without
-                            anyone noticing — charging less is now a discount,
-                            and it is recorded as one. */}
+                        {/* The rate being charged. The catalog price unless a
+                            landing rate was entered below, in which case that
+                            wins and the list price is shown struck beneath it,
+                            so the override is visible rather than silent. */}
                         <ThemedText type="smallBold" style={styles.qraValue}>
-                          {money(Number(line.price) || 0)}
+                          {money(rateOf(line))}
                         </ThemedText>
+                        {Number(line.landingRate) > 0 ? (
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.listStruck}>
+                            {money(Number(line.price) || 0)}
+                          </ThemedText>
+                        ) : null}
                       </View>
                       <View style={[styles.qraCell, { alignItems: 'flex-end' }]}>
                         <ThemedText type="small" themeColor="textSecondary" style={styles.qraLabel}>
@@ -1240,6 +1290,43 @@ export default function GiveProductScreen() {
                         <ThemedText type="smallBold" style={styles.qraValue}>
                           {money(gstSplit(math.gross).taxable)}
                         </ThemedText>
+                      </View>
+                    </View>
+
+                    {/* The rate agreed on the field, when it is not the catalog
+                        one. Above the discount because it comes first in the
+                        arithmetic: the discount is taken off THIS rate. Blank
+                        means the catalog price stands, so nothing changes for
+                        the ordinary sale. */}
+                    <View style={styles.discPanel}>
+                      <View style={styles.discHead}>
+                        <Ionicons name="trending-down" size={14} color={GREEN} />
+                        <ThemedText type="smallBold" style={[styles.discTitle, { color: GREEN }]}>
+                          Farmer/FPO Rate
+                        </ThemedText>
+                      </View>
+                      <View style={styles.discFields}>
+                        <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                            Farmer/FPO rate (₹)
+                          </ThemedText>
+                          <TextInput
+                            value={line.landingRate}
+                            onChangeText={(v) => setLandingRate(p._id, v)}
+                            keyboardType="decimal-pad"
+                            placeholder={String(Number(line.price) || 0)}
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.discFieldInput, { color: theme.text }]}
+                          />
+                        </View>
+                        <View style={[styles.discField, { backgroundColor: theme.background }]}>
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
+                            Rate Applied
+                          </ThemedText>
+                          <ThemedText style={[styles.discFieldValue, { color: GREEN }]}>
+                            {money(rateOf(line))}
+                          </ThemedText>
+                        </View>
                       </View>
                     </View>
 
@@ -1282,7 +1369,7 @@ export default function GiveProductScreen() {
                       <View style={styles.discFields}>
                         <View style={[styles.discField, { backgroundColor: theme.background }]}>
                           <ThemedText type="small" themeColor="textSecondary" style={styles.discFieldLabel}>
-                            {line.discountType === 'pct' ? 'Discount (%)' : 'Discount (₹)'}
+                            {line.discountType === 'pct' ? 'Discount (%)' : 'Discount per unit (₹)'}
                           </ThemedText>
                           <TextInput
                             value={line.discount}
@@ -1624,12 +1711,26 @@ const styles = StyleSheet.create({
     backgroundColor: Brand.primarySurface,
   },
   itemSizeText: { fontSize: 11, fontWeight: '800', color: GREEN },
+  listStruck: { fontSize: 11, lineHeight: 14, textDecorationLine: 'line-through' },
   /** Qty / Rate / Amount — the three columns an invoice line is read in. */
   qrarow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two },
   qraCell: { flex: 1, gap: 3 },
   qraLabel: { fontSize: 11 },
   qraValue: { fontSize: 15 },
-  stepValue: { color: GREEN, minWidth: 20, textAlign: 'center' },
+  stepValue: { color: GREEN, minWidth: 24, textAlign: 'center', fontSize: 15 },
+  /**
+   * The confirm screen's stepper is outlined, not filled: its icons and count
+   * are green, and on the filled `stepper` they were green on green — the
+   * quantity was there, just invisible.
+   */
+  stepperOutline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: Spacing.two,
+    borderWidth: 1.5,
+    borderColor: GREEN,
+    backgroundColor: '#fff',
+  },
   /** The discount panel, tinted so it reads as an adjustment to the line. */
   discPanel: {
     backgroundColor: Brand.dangerSurface,
