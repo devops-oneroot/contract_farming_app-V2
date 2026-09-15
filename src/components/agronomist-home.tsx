@@ -101,7 +101,9 @@ export function AgronomistHome() {
     },
     {
       key: 'disease',
-      label: senior ? 'Disease Reports' : 'My Reports',
+      // One name for both sides of the same screen: a senior gives advisory
+      // here, an agronomist receives it. The subtitle says which.
+      label: 'Advisory Section',
       sub: senior ? 'Awaiting advice' : 'Advice received',
       icon: 'bug',
       tint: Brand.danger,

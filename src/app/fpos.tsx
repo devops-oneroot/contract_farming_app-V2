@@ -146,7 +146,14 @@ export default function FposScreen() {
   // Null = show everything, exactly as on the People tab.
   const [dateFilter, setDateFilter] = useState<DateFilter | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * Which date the calendar is being opened for: one exact day, or either end
+   * of a range. One picker for all three, as on the People tab.
+   */
+  const [pickerFor, setPickerFor] = useState<'day' | 'from' | 'to' | null>(null);
+  /** Both ends of a custom range, applied together or not at all. */
+  const [rangeFrom, setRangeFrom] = useState<Date | null>(null);
+  const [rangeTo, setRangeTo] = useState<Date | null>(null);
   const [picking, setPicking] = useState<'crop' | 'who' | null>(null);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
 
@@ -651,7 +658,7 @@ export default function FposScreen() {
             </View>
 
             <Pressable
-              onPress={() => setPickerOpen(true)}
+              onPress={() => setPickerFor('day')}
               style={({ pressed }) => [
                 styles.pickDate,
                 { backgroundColor: theme.backgroundElement },
@@ -667,14 +674,87 @@ export default function FposScreen() {
               <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
             </Pressable>
 
-            {pickerOpen ? (
+            {/* A range of the agent's own choosing, the same control the People
+                tab has. The count in the title is the server's total for the
+                window, so "how many FPOs between these dates" is answered on
+                apply. */}
+            <View style={[styles.pickDate, { backgroundColor: theme.backgroundElement }]}>
+              <Ionicons name="calendar-number-outline" size={18} color={GREEN} />
+              <View style={{ flex: 1, gap: Spacing.two }}>
+                <ThemedText type="smallBold">Pick a date range</ThemedText>
+                <View style={styles.rangeRow}>
+                  {(['from', 'to'] as const).map((end) => {
+                    const value = end === 'from' ? rangeFrom : rangeTo;
+                    return (
+                      <Pressable
+                        key={end}
+                        onPress={() => setPickerFor(end)}
+                        style={({ pressed }) => [
+                          styles.rangeField,
+                          {
+                            backgroundColor: theme.background,
+                            borderColor: value ? GREEN : 'transparent',
+                          },
+                          pressed && { opacity: 0.85 },
+                        ]}>
+                        <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                          {end === 'from' ? 'From' : 'To'}
+                        </ThemedText>
+                        <ThemedText
+                          type="smallBold"
+                          style={{ color: value ? theme.text : theme.textSecondary }}>
+                          {value ? fmtDate(value) : 'Select'}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable
+                  disabled={!rangeFrom || !rangeTo}
+                  onPress={() => {
+                    if (!rangeFrom || !rangeTo) return;
+                    // Either order works; whichever is earlier is the start.
+                    const [a, b] =
+                      rangeFrom <= rangeTo ? [rangeFrom, rangeTo] : [rangeTo, rangeFrom];
+                    setDateFilter({
+                      label: `${fmtDate(a)} – ${fmtDate(b)}`,
+                      from: startOfDay(a),
+                      to: endOfDay(b),
+                    });
+                    setFilterOpen(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.applyBtn,
+                    (!rangeFrom || !rangeTo) && { opacity: 0.4 },
+                    pressed && { opacity: 0.85 },
+                  ]}>
+                  <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                    Apply range
+                  </ThemedText>
+                </Pressable>
+              </View>
+            </View>
+
+            {pickerFor ? (
               <DateTimePicker
-                value={dateFilter ? dateFilter.from : new Date()}
+                value={
+                  pickerFor === 'from'
+                    ? (rangeFrom ?? new Date())
+                    : pickerFor === 'to'
+                      ? (rangeTo ?? new Date())
+                      : (dateFilter?.from ?? new Date())
+                }
                 mode="date"
                 maximumDate={new Date()}
                 onChange={(event, selected) => {
-                  if (Platform.OS !== 'ios') setPickerOpen(false);
-                  if (event.type === 'set' && selected) {
+                  const which = pickerFor;
+                  if (Platform.OS !== 'ios') setPickerFor(null);
+                  if (event.type !== 'set' || !selected) return;
+                  if (which === 'from') {
+                    setRangeFrom(selected);
+                  } else if (which === 'to') {
+                    setRangeTo(selected);
+                  } else {
                     setDateFilter({
                       label: fmtDate(selected),
                       from: startOfDay(selected),
@@ -685,9 +765,29 @@ export default function FposScreen() {
                 }}
               />
             ) : null}
+            {Platform.OS === 'ios' && pickerFor ? (
+              <Pressable
+                onPress={() => {
+                  // One end of a range stays on the sheet so the other can be
+                  // picked; an exact day is the whole answer and closes it.
+                  const wasDay = pickerFor === 'day';
+                  setPickerFor(null);
+                  if (wasDay) setFilterOpen(false);
+                }}
+                style={styles.doneBtn}>
+                <ThemedText type="linkPrimary">Done</ThemedText>
+              </Pressable>
+            ) : null}
 
             {dateFilter ? (
-              <Pressable onPress={() => { setDateFilter(null); setFilterOpen(false); }} style={styles.clearDate}>
+              <Pressable
+                onPress={() => {
+                  setDateFilter(null);
+                  setRangeFrom(null);
+                  setRangeTo(null);
+                  setFilterOpen(false);
+                }}
+                style={styles.clearDate}>
                 <ThemedText type="small" themeColor="textSecondary">
                   Clear date filter
                 </ThemedText>
@@ -748,6 +848,22 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.five,
     borderWidth: 1,
   },
+  rangeRow: { flexDirection: 'row', gap: Spacing.two },
+  rangeField: {
+    flex: 1,
+    gap: 2,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1.5,
+  },
+  applyBtn: {
+    alignItems: 'center',
+    paddingVertical: Spacing.two + 2,
+    borderRadius: Spacing.two,
+    backgroundColor: GREEN,
+  },
+  doneBtn: { alignSelf: 'flex-end', padding: Spacing.two },
   pickDate: {
     flexDirection: 'row',
     alignItems: 'center',
