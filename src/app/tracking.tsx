@@ -611,6 +611,9 @@ export default function TrackingScreen() {
       {capturing && (
         <CameraCapture
           onCapture={onCapture}
+          // Camera only. These shots are the evidence of where the day started
+          // and ended, and one picked from the roll is evidence of nothing.
+          allowGallery={false}
           onClose={() => {
             // Backing out of the camera must return to the pause sheet, or the
             // reason typed a moment ago is stranded behind a closed modal.

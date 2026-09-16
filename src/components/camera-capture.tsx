@@ -20,13 +20,20 @@ import { ThemedText } from '@/components/themed-text';
  * component is the one place every photo in the app is taken, so offering it
  * here offers it everywhere, and there is no screen left where an agronomist
  * can be stuck because the light has gone or the shot was already taken.
+ *
+ * `allowGallery={false}` takes it away again for the shots whose whole point
+ * is that they were taken THEN AND THERE — the day's start and end. A picture
+ * chosen from the roll proves nothing about where anyone was.
  */
 export function CameraCapture({
   onCapture,
   onClose,
+  allowGallery = true,
 }: {
   onCapture: (uri: string) => void;
   onClose: () => void;
+  /** Offer a gallery pick beside the shutter. Default true. */
+  allowGallery?: boolean;
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
@@ -88,13 +95,17 @@ export function CameraCapture({
           <ThemedText type="smallBold">Grant permission</ThemedText>
         </Pressable>
         {/* The gallery needs no camera, so a refused permission must not be a
-            dead end — a photo taken earlier is still a photo. */}
-        <Pressable onPress={pickFromGallery} style={styles.galleryWide}>
-          <Ionicons name="images" size={18} color="#fff" />
-          <ThemedText type="smallBold" style={styles.whiteText}>
-            Choose from gallery
-          </ThemedText>
-        </Pressable>
+            dead end — a photo taken earlier is still a photo. Except where the
+            live shot IS the point, in which case granting the camera is the
+            only way through. */}
+        {allowGallery ? (
+          <Pressable onPress={pickFromGallery} style={styles.galleryWide}>
+            <Ionicons name="images" size={18} color="#fff" />
+            <ThemedText type="smallBold" style={styles.whiteText}>
+              Choose from gallery
+            </ThemedText>
+          </Pressable>
+        ) : null}
         <Pressable onPress={onClose} style={styles.textBtn}>
           <ThemedText style={styles.whiteText}>Cancel</ThemedText>
         </Pressable>
@@ -113,16 +124,22 @@ export function CameraCapture({
         </View>
         <View style={styles.bottomBar}>
           {/* Left of the shutter, and the empty slot on the right keeps the
-              shutter itself centred — it is still the main thing to hit. */}
-          <Pressable
-            onPress={pickFromGallery}
-            disabled={busy}
-            hitSlop={10}
-            accessibilityLabel="Choose a photo from the gallery"
-            style={({ pressed }) => [styles.galleryBtn, pressed && { opacity: 0.7 }]}>
-            <Ionicons name="images" size={22} color="#fff" />
-            <ThemedText style={styles.galleryText}>Gallery</ThemedText>
-          </Pressable>
+              shutter itself centred — it is still the main thing to hit. Both
+              slots stay in place when the gallery is off, so the shutter does
+              not shift between screens. */}
+          {allowGallery ? (
+            <Pressable
+              onPress={pickFromGallery}
+              disabled={busy}
+              hitSlop={10}
+              accessibilityLabel="Choose a photo from the gallery"
+              style={({ pressed }) => [styles.galleryBtn, pressed && { opacity: 0.7 }]}>
+              <Ionicons name="images" size={22} color="#fff" />
+              <ThemedText style={styles.galleryText}>Gallery</ThemedText>
+            </Pressable>
+          ) : (
+            <View style={styles.bottomSlot} />
+          )}
           <Pressable onPress={snap} disabled={busy} style={styles.shutterOuter}>
             {busy ? <ActivityIndicator color="#000" /> : <View style={styles.shutterInner} />}
           </Pressable>
