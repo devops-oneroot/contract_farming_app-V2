@@ -15,10 +15,9 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
 import { usePostHog } from 'posthog-react-native';
 
@@ -28,6 +27,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, CatalogCrop, Crop, isAgronomist, isContract, PackageOfPractices, PopStep } from '@/lib/api';
@@ -102,7 +102,7 @@ function FarmerHome() {
       { text: 'Call 9606031878', onPress: () => Linking.openURL('tel:9606031878').catch(() => {}) },
     ]);
 
-  const { width } = useWindowDimensions();
+  const width = useContentWidth();
   const [crops, setCrops] = useState<Crop[]>([]);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
   const [pops, setPops] = useState<Record<string, PackageOfPractices>>({});
@@ -658,7 +658,7 @@ const styles = StyleSheet.create({
   carousel: { marginHorizontal: -Spacing.four },
   bannerImg: { width: '100%', height: 170, borderRadius: Spacing.four },
   dots: { flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: Spacing.two },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(46,158,91,0.3)' },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,127,0,0.3)' },
   dotActive: { width: 18, backgroundColor: GREEN },
   addCropBtn: {
     flexDirection: 'row',
@@ -739,7 +739,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    backgroundColor: '#2e9e5b',
+    backgroundColor: '#FF7F00',
     borderRadius: Spacing.four,
     padding: Spacing.four,
     marginBottom: Spacing.four,
@@ -779,13 +779,13 @@ const styles = StyleSheet.create({
     padding: Spacing.three,
     borderRadius: Spacing.four,
     borderLeftWidth: 3,
-    borderLeftColor: '#2e9e5b',
+    borderLeftColor: '#FF7F00',
   },
   cropEmojiWrap: {
     width: 46,
     height: 46,
     borderRadius: 23,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },

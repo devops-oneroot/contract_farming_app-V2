@@ -16,11 +16,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { PhotoViewer } from '@/components/photo-viewer';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { VoiceNotePlayer } from '@/components/voice-note';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -111,19 +113,19 @@ export default function DiseaseReportsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">
-            {senior ? 'Disease reports' : 'My disease reports'}
-          </ThemedText>
-          {/* Raising a report should not require finding the farmer first. */}
-          <Pressable onPress={() => router.push('/report-disease' as never)} hitSlop={10}>
-            <Ionicons name="add-circle" size={26} color={GREEN} />
-          </Pressable>
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title={senior ? 'Disease reports' : 'My disease reports'}
+          right={
+            <>
+              {/* Raising a report should not require finding the farmer first. */}
+              <Pressable onPress={() => router.push('/report-disease' as never)} hitSlop={10}>
+                <Ionicons name="add-circle" size={26} color={GREEN} />
+              </Pressable>
+            </>
+          }
+        />
 
         {/* A senior works a queue, so let them clear it and still look back. */}
         {senior && (
@@ -157,7 +159,7 @@ export default function DiseaseReportsScreen() {
             contentContainerStyle={styles.body}
             refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
             {reports.length === 0 ? (
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <Ionicons name="leaf-outline" size={36} color={theme.textSecondary} />
                 <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                   {senior
@@ -167,7 +169,7 @@ export default function DiseaseReportsScreen() {
               </ThemedView>
             ) : (
               reports.map((r) => (
-                <ThemedView key={r._id} type="backgroundElement" style={styles.card}>
+                <ThemedView key={r._id} type="card" style={styles.card}>
                   <View style={styles.cardHead}>
                     <View style={{ flex: 1 }}>
                       <ThemedText type="smallBold">
@@ -214,6 +216,12 @@ export default function DiseaseReportsScreen() {
                     <ThemedText type="small" style={{ marginTop: Spacing.two }}>
                       {r.note}
                     </ThemedText>
+                  ) : null}
+
+                  {r.voiceNoteUrl ? (
+                    <View style={{ marginTop: Spacing.two }}>
+                      <VoiceNotePlayer uri={r.voiceNoteUrl} fallbackSeconds={r.voiceNoteSeconds} />
+                    </View>
                   ) : null}
 
                   {/* The advice, which is the whole point of the thread. */}
@@ -303,13 +311,6 @@ export default function DiseaseReportsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   filterRow: { flexDirection: 'row', gap: Spacing.two, paddingHorizontal: Spacing.four, paddingBottom: Spacing.two },
   filterChip: { paddingHorizontal: Spacing.four, paddingVertical: Spacing.two, borderRadius: Spacing.five },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },

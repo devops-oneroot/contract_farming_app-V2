@@ -16,8 +16,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -157,15 +158,12 @@ export default function AgronomistVerifyScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">{mode === 'product' ? 'Products' : 'Operation'}</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title={mode === 'product' ? 'Products' : 'Operation'}
+          />
 
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
             {/* Task summary */}
@@ -346,18 +344,11 @@ export default function AgronomistVerifyScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   card: { backgroundColor: '#fff', borderRadius: Spacing.four, padding: Spacing.four },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   dayBadge: {
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     paddingHorizontal: Spacing.three,
     paddingVertical: 6,
     borderRadius: Spacing.four,
@@ -373,7 +364,7 @@ const styles = StyleSheet.create({
   },
   catPill: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     paddingHorizontal: Spacing.two,
     paddingVertical: 4,
     borderRadius: Spacing.four,
@@ -389,7 +380,7 @@ const styles = StyleSheet.create({
   },
   prodRowImg: { width: 56, height: 56, borderRadius: Spacing.two },
   prodPlaceholder: {
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },

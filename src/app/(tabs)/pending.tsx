@@ -14,7 +14,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
@@ -309,7 +309,7 @@ export default function PendingScreen() {
                   onPress={() => setCropFilter(c)}
                   style={[
                     styles.chip,
-                    { backgroundColor: on ? GREEN : '#fff', borderColor: on ? GREEN : 'rgba(46,158,91,0.25)' },
+                    { backgroundColor: on ? GREEN : '#fff', borderColor: on ? GREEN : 'rgba(255,127,0,0.25)' },
                   ]}>
                   <ThemedText style={[styles.chipText, { color: on ? '#fff' : theme.text }]}>
                     {c ?? 'All'}
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(46,158,91,0.25)',
+    borderColor: 'rgba(255,127,0,0.25)',
   },
   chipText: { fontSize: 13, fontWeight: '600' },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: Spacing.two },
@@ -665,14 +665,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     borderRadius: Spacing.four,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(46,158,91,0.25)',
+    borderColor: 'rgba(255,127,0,0.25)',
   },
   sheetOptionAlert: { borderColor: `${RED}55` },
   sheetIcon: {
     width: 46,
     height: 46,
     borderRadius: Spacing.three,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },

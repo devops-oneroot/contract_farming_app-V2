@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -38,14 +39,11 @@ export default function AgentActionsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">{label ?? 'Actions'}</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title={label ?? 'Actions'}
+        />
 
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <ThemedText type="subtitle" style={styles.heading}>
@@ -119,14 +117,6 @@ export default function AgentActionsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
-  backBtn: { padding: 2 },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.three },
   heading: { fontSize: 20, marginTop: Spacing.one, marginBottom: Spacing.one },
   card: {
@@ -141,7 +131,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: Spacing.three,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },

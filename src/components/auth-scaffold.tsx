@@ -1,10 +1,9 @@
 import { Image } from 'expo-image';
 import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
-import { Brand } from '@/constants/theme';
+import { Brand, LogoAspect, Logos } from '@/constants/theme';
 
-const LOGO = require('@/assets/images/logo.png');
 
 // Branded auth palette (these screens are always light — no theme dependence).
 // Warm neutrals rather than the old green tints, matching Brand.surface elsewhere.
@@ -12,7 +11,7 @@ export const AUTH = {
   bg: Brand.surface,
   card: '#ffffff',
   input: '#F2EDE6',
-  btn: '#153a1f',
+  btn: Brand.primary,
   gold: '#B8912E',
   heading: '#12212b',
   subtitle: '#67788a',
@@ -49,9 +48,7 @@ export function AuthScaffold({
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}>
-            <View style={styles.logoCard}>
-              <Image source={LOGO} style={styles.logo} contentFit="contain" />
-            </View>
+            <Image source={Logos.stacked} style={styles.logo} contentFit="contain" accessibilityLabel="OneRoot" />
 
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>{subtitle}</Text>
@@ -98,21 +95,8 @@ export const authStyles = StyleSheet.create({
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22, paddingVertical: 24 },
-  logoCard: {
-    alignSelf: 'center',
-    width: 76,
-    height: 76,
-    borderRadius: 20,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  logo: { width: 54, height: 54 },
+  // The wordmark stands on its own - no tile behind it.
+  logo: { alignSelf: 'center', width: 150, height: 150 / LogoAspect.stacked },
   title: { textAlign: 'center', fontSize: 26, fontWeight: '800', color: AUTH.heading, marginTop: 14 },
   subtitle: { textAlign: 'center', fontSize: 14, color: AUTH.subtitle, marginTop: 5 },
   card: {

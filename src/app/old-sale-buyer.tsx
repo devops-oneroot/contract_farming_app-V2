@@ -10,8 +10,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -161,14 +162,11 @@ export default function OldSaleBuyerScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Who got the products?</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Who got the products?"
+        />
 
         <View style={styles.tools}>
           {/* One line saying what this screen is for. Without it the picker
@@ -245,13 +243,6 @@ export default function OldSaleBuyerScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.three,
-  },
   tools: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.three, gap: Spacing.two },
   switch: { flexDirection: 'row', borderRadius: 10, padding: 3, gap: 3 },
   switchBtn: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: 8 },

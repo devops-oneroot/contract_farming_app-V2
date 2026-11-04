@@ -16,16 +16,19 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
+import { VoiceNote, VoiceNoteRecorder } from '@/components/voice-note';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
 import { api, Crop } from '@/lib/api';
+import { fileMeta } from '@/lib/onboarding-recorder';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -70,6 +73,8 @@ export default function ReportDiseaseScreen() {
   const [sentToId, setSentToId] = useState<string | null>(null);
   const [photos, setPhotos] = useState<string[]>([]);
   const [note, setNote] = useState('');
+  // The problem described by voice, for agents who would rather speak than type.
+  const [voiceNote, setVoiceNote] = useState<VoiceNote | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -169,11 +174,15 @@ export default function ReportDiseaseScreen() {
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         photos: sized,
+        voiceNote: voiceNote
+          ? { uri: voiceNote.uri, ...fileMeta(voiceNote.uri, 'disease-voice'), seconds: voiceNote.seconds }
+          : null,
       });
       posthog?.capture('disease_reported', {
         photos: photos.length,
         hasCrop: !!cropId,
         directed: !!sentToId,
+        voiceNote: !!voiceNote,
       });
       const to = seniors.find((s) => s._id === sentToId);
       Alert.alert(
@@ -192,15 +201,12 @@ export default function ReportDiseaseScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">Report crop disease</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title="Report crop disease"
+          />
 
           <ScrollView
             ref={scrollRef}
@@ -342,6 +348,10 @@ export default function ReportDiseaseScreen() {
               onBlur={() => setNoteFocused(false)}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
+            <ThemedText type="small" themeColor="textSecondary" style={styles.orLabel}>
+              or describe it by voice
+            </ThemedText>
+            <VoiceNoteRecorder value={voiceNote} onChange={setVoiceNote} />
 
             {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
 
@@ -388,13 +398,6 @@ export default function ReportDiseaseScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two },
   fieldLabel: { marginTop: Spacing.four },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
@@ -442,6 +445,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     marginTop: Spacing.one,
   },
+  orLabel: { fontSize: 12, textAlign: 'center', marginVertical: Spacing.two },
   error: { color: Brand.danger, marginTop: Spacing.two },
   sendBtn: {
     flexDirection: 'row',

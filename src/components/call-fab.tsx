@@ -2,7 +2,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useEffect, useRef } from 'react';
 import { Animated, Linking, Platform, Pressable, StyleSheet } from 'react-native';
 
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 
 // Support / contact number for the contract-farming team.
 const SUPPORT_NUMBER = '9606031878';
@@ -46,13 +46,16 @@ const styles = StyleSheet.create({
   wrap: {
     position: 'absolute',
     right: Spacing.four,
-    bottom: BottomTabInset - Spacing.two,
+    // The tab bar is docked, so the screen already ends above it - a plain gap
+    // clears it on every platform. (BottomTabInset is 0 on web, which put the
+    // button half behind the bar there.)
+    bottom: Spacing.four,
   },
   fab: {
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: '#2e9e5b',
+    backgroundColor: '#FF7F00',
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({

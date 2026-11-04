@@ -12,6 +12,10 @@ const SESSION_KEY = 'oneroot.tracking.sessionId';
 // Fixes that could not be sent yet — a field agent spends much of the day out
 // of signal, and a dropped batch is a hole in the route and the distance.
 const BUFFER_KEY = 'oneroot.tracking.buffer';
+// Set while the day is paused, so the app can tell "stopped on purpose" from
+// "stopped because location went off" without asking the server - the agent is
+// often offline exactly when this matters.
+const PAUSED_KEY = 'oneroot.tracking.paused';
 
 // Sampling: often enough to trace a road, rarely enough to survive a workday on
 // one battery. `distanceInterval` does most of the work — a parked phone stops
@@ -112,7 +116,7 @@ async function beginLocationUpdates() {
     foregroundService: {
       notificationTitle: 'OneRoot is tracking your day',
       notificationBody: 'Your route is being recorded. Tap END in the app to stop.',
-      notificationColor: '#2E9E5B',
+      notificationColor: '#FF7F00',
     },
   });
 }
@@ -147,6 +151,7 @@ export async function startTracking(
 
   const session = await api.startTracking(userId, role, photo);
   await AsyncStorage.setItem(SESSION_KEY, session._id);
+  await AsyncStorage.removeItem(PAUSED_KEY);
   await writeBuffer([]);
 
   await endLocationUpdates();
@@ -174,6 +179,7 @@ export async function pauseTracking(
   const res = await api.pauseTracking(sessionId, reason, photo);
 
   await endLocationUpdates();
+  await AsyncStorage.setItem(PAUSED_KEY, '1');
   return res;
 }
 
@@ -183,6 +189,7 @@ export async function resumePausedTracking() {
   if (!sessionId) return null;
 
   const res = await api.resumeTracking(sessionId);
+  await AsyncStorage.removeItem(PAUSED_KEY);
   await beginLocationUpdates();
   return res;
 }
@@ -205,7 +212,7 @@ export async function stopTracking(photo?: { uri: string; name: string; type: st
     // Leave the buffer alone: the session stays open server-side and the next
     // start will close it, rather than silently discarding the day's tail.
   }
-  await AsyncStorage.removeItem(SESSION_KEY);
+  await AsyncStorage.multiRemove([SESSION_KEY, PAUSED_KEY]);
   return session;
 }
 
@@ -216,7 +223,7 @@ export async function stopTracking(photo?: { uri: string; name: string; type: st
 export async function resumeTracking(userId: string) {
   const session = await api.currentTracking(userId).catch(() => null);
   if (!session) {
-    await AsyncStorage.removeItem(SESSION_KEY);
+    await AsyncStorage.multiRemove([SESSION_KEY, PAUSED_KEY]);
     const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
     if (running) await Location.stopLocationUpdatesAsync(TRACKING_TASK).catch(() => {});
     return null;
@@ -227,12 +234,49 @@ export async function resumeTracking(userId: string) {
   if (isPaused(session)) {
     // The day is open but the agent stepped out of it. Reopening the app must
     // not quietly start recording again — only the RESUME button does that.
+    await AsyncStorage.setItem(PAUSED_KEY, '1');
     await endLocationUpdates();
   } else {
+    await AsyncStorage.removeItem(PAUSED_KEY);
     const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
     if (bg?.status === 'granted') await beginLocationUpdates().catch(() => {});
   }
 
   await flushBuffer();
   return session;
+}
+
+/**
+ * Signing out on this phone: send what is buffered, stop recording, and forget
+ * the session here. The day stays open on the server - signing back in picks
+ * it up again (resumeTracking) - but this phone must not keep feeding it, or
+ * feed it from whoever signs in next.
+ */
+export async function detachTracking() {
+  await flushBuffer().catch(() => null);
+  await endLocationUpdates();
+  await AsyncStorage.multiRemove([SESSION_KEY, PAUSED_KEY, BUFFER_KEY]).catch(() => {});
+}
+
+/**
+ * Make sure an open, unpaused day is actually recording.
+ *
+ * Switching location off, or revoking the permission, can stop the OS task
+ * while the day stays open - every fix until it is restarted is lost distance.
+ * Called by the location gate whenever location is usable again; `restart`
+ * forces a fresh start, since a task that survived location being off may
+ * still be registered yet never deliver another fix.
+ *
+ * Works from local state only, so it re-arms tracking with no signal.
+ */
+export async function ensureTrackingRunning(restart = false) {
+  const [[, sessionId], [, paused]] = await AsyncStorage.multiGet([SESSION_KEY, PAUSED_KEY]);
+  if (!sessionId || paused) return;
+
+  const bg = await Location.getBackgroundPermissionsAsync().catch(() => null);
+  if (bg?.status !== 'granted') return;
+
+  if (restart) await endLocationUpdates();
+  await beginLocationUpdates();
+  await flushBuffer();
 }

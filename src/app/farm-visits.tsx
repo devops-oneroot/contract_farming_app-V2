@@ -20,9 +20,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 import { WebView } from 'react-native-webview';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -164,7 +165,7 @@ function farmersMapHtml(
 
   var bounds = [];
   PINS.forEach(function(p){
-    var colour = p.visited ? '#8a8f98' : '#2e9e5b';
+    var colour = p.visited ? '#8a8f98' : '#FF7F00';
     var m = L.circleMarker([p.lat,p.lng],
       {radius:10,color:'#fff',weight:3,fillColor:colour,fillOpacity:1}).addTo(map);
     var html = '<div class="lbl">'+p.name+'</div><div>'+p.dist+'</div>'
@@ -714,7 +715,7 @@ export default function FarmVisitsScreen() {
             <View
               style={[
                 styles.avatar,
-                { backgroundColor: f.visited ? GREEN : 'rgba(46,158,91,0.12)' },
+                { backgroundColor: f.visited ? GREEN : 'rgba(255,127,0,0.12)' },
               ]}>
               {f.visited ? (
                 <Ionicons name="checkmark" size={22} color="#fff" />
@@ -902,14 +903,11 @@ export default function FarmVisitsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Farm Visits</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Farm Visits"
+        />
 
         {/* Find a farmer, or register one who is not on the list yet. */}
         <View style={styles.searchRow}>
@@ -1042,7 +1040,7 @@ export default function FarmVisitsScreen() {
             loading ? (
               <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
             ) : (
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <Ionicons
                   name={searching ? 'search-outline' : EMPTY_STATE[tab].icon}
                   size={40}
@@ -1122,7 +1120,7 @@ export default function FarmVisitsScreen() {
       {/* All farmers around you. Tap a pin to start that visit. */}
       <Modal visible={showMap} animationType="slide" onRequestClose={() => setMapHtml(null)}>
         <View style={{ flex: 1, backgroundColor: theme.background }}>
-          <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
             <View style={styles.topBar}>
               <Pressable onPress={() => setMapHtml(null)} hitSlop={10}>
                 <Ionicons name="close" size={26} color={theme.text} />
@@ -1132,7 +1130,7 @@ export default function FarmVisitsScreen() {
             </View>
 
             {pins.length === 0 ? (
-              <ThemedView type="backgroundElement" style={[styles.empty, { margin: Spacing.four }]}>
+              <ThemedView type="card" style={[styles.empty, { margin: Spacing.four }]}>
                 <Ionicons name="map-outline" size={40} color={theme.textSecondary} />
                 <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                   None of your farmers have a farm boundary or location saved yet, so there is

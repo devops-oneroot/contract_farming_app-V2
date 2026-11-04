@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -11,14 +12,14 @@ import { useTheme } from '@/hooks/use-theme';
 import { api, PackageOfPractices, PopStep } from '@/lib/api';
 
 const CATEGORY: Record<string, { emoji: string; color: string }> = {
-  sowing: { emoji: '🌱', color: '#2e9e5b' },
+  sowing: { emoji: '🌱', color: '#2E9E5B' },
   weed: { emoji: '🌿', color: '#0d9488' },
   irrigation: { emoji: '💧', color: '#1e88e5' },
   monitoring: { emoji: '🔍', color: '#64748b' },
   fertilizer: { emoji: '🧪', color: '#f59e0b' },
   pest: { emoji: '🐛', color: '#e04f1a' },
   disease: { emoji: '🦠', color: '#7c3aed' },
-  growth: { emoji: '📈', color: '#2e9e5b' },
+  growth: { emoji: '📈', color: '#2E9E5B' },
   harvest: { emoji: '🌾', color: '#b45309' },
 };
 
@@ -132,19 +133,16 @@ export default function PracticesScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Package of Practices</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Package of Practices"
+        />
 
         {loading ? (
           <ActivityIndicator style={{ marginTop: Spacing.six }} color={theme.text} />
         ) : error ? (
-          <ThemedView type="backgroundElement" style={styles.errorCard}>
+          <ThemedView type="card" style={styles.errorCard}>
             <ThemedText type="small" style={{ color: '#e5484d' }}>
               {error}
             </ThemedText>
@@ -161,7 +159,7 @@ export default function PracticesScreen() {
               return (
                 <Pressable onPress={() => openDay(item)} style={({ pressed }) => pressed && { opacity: 0.7 }}>
                   <ThemedView
-                    type="backgroundElement"
+                    type="card"
                     style={[
                       styles.stepCard,
                       { borderLeftColor: cat.color, opacity: status === 'done' ? 0.6 : 1 },
@@ -197,13 +195,6 @@ export default function PracticesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six, gap: Spacing.two },
   headerCard: { paddingVertical: Spacing.three, gap: Spacing.one },
   progressWrap: { marginTop: Spacing.two, gap: Spacing.one },

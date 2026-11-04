@@ -16,8 +16,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
@@ -389,13 +390,10 @@ export default function OnboardFpoScreen() {
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">{editing ? 'Edit FPO' : 'Onboard FPO'}</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title={editing ? 'Edit FPO' : 'Onboard FPO'}
+          />
 
           {loadingFpo ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
@@ -820,13 +818,6 @@ export default function OnboardFpoScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two },
   label: { marginTop: Spacing.four },
   hint: { fontSize: 11, marginTop: Spacing.one },

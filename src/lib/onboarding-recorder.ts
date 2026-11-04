@@ -17,14 +17,14 @@ import { api } from './api';
  * in an <audio> tag. HIGH_QUALITY is .m4a/AAC everywhere; mono at 64 kbps keeps
  * it to roughly half a megabyte per minute, which a field connection can carry.
  */
-const SPEECH_PRESET = {
+export const SPEECH_PRESET = {
   ...RecordingPresets.HIGH_QUALITY,
   numberOfChannels: 1,
   bitRate: 64000,
 };
 
 /** Cloudinary keys the upload off the extension, so send the real one. */
-function fileMeta(uri: string) {
+export function fileMeta(uri: string, base = 'onboarding') {
   const ext = (uri.split('.').pop() || 'm4a').split('?')[0].toLowerCase();
   const mime: Record<string, string> = {
     m4a: 'audio/m4a',
@@ -35,7 +35,7 @@ function fileMeta(uri: string) {
     wav: 'audio/wav',
     webm: 'audio/webm',
   };
-  return { name: `onboarding.${ext}`, type: mime[ext] ?? 'audio/m4a' };
+  return { name: `${base}.${ext}`, type: mime[ext] ?? 'audio/m4a' };
 }
 
 /**

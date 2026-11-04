@@ -15,8 +15,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -275,7 +276,7 @@ export default function FposScreen() {
     ].filter(Boolean);
 
     return (
-      <ThemedView type="backgroundElement" style={styles.card}>
+      <ThemedView type="card" style={styles.card}>
         {/* Two distinct targets, side by side: the details, and the sale. They
             were a full-width button nested inside a card-wide Pressable, where
             the outer one usually won and "Give product" opened the edit form
@@ -362,18 +363,18 @@ export default function FposScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">
-            FPOs{totalCount != null ? ` (${totalCount})` : ''}
-          </ThemedText>
-          <Pressable onPress={() => router.push('/onboard-fpo' as never)} hitSlop={10}>
-            <Ionicons name="add-circle" size={26} color={GREEN} />
-          </Pressable>
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title={<>FPOs{totalCount != null ? ` (${totalCount})` : ''}</>}
+          right={
+            <>
+              <Pressable onPress={() => router.push('/onboard-fpo' as never)} hitSlop={10}>
+                <Ionicons name="add-circle" size={26} color={GREEN} />
+              </Pressable>
+            </>
+          }
+        />
 
         {/* Outside the list: filtering a long one should not mean scrolling
             back up to change what was searched. */}
@@ -569,7 +570,7 @@ export default function FposScreen() {
               )
             }
             ListEmptyComponent={
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <Ionicons
                   name={term ? 'search-outline' : 'business-outline'}
                   size={36}
@@ -874,13 +875,6 @@ const styles = StyleSheet.create({
   },
   clearDate: { alignItems: 'center', paddingVertical: Spacing.three, marginTop: Spacing.two },
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   tools: { paddingBottom: Spacing.two, gap: Spacing.two },
   search: {
     // flex, not a margin: the row already provides the outer padding, and a

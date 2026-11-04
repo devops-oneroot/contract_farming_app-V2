@@ -12,8 +12,9 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { DayWorkSheet } from '@/components/day-work-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -122,7 +123,7 @@ export default function TeamScreen() {
   if (!senior) {
     return (
       <ThemedView style={styles.container}>
-        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
           <TopBar title="Team" onBack={() => router.back()} theme={theme} />
           <View style={styles.locked}>
             <Ionicons name="lock-closed-outline" size={40} color={theme.textSecondary} />
@@ -139,7 +140,7 @@ export default function TeamScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <TopBar title="Team" onBack={() => router.back()} theme={theme} />
 
         {/* Which day. Stepping back a day is one tap, because "how did
@@ -190,7 +191,7 @@ export default function TeamScreen() {
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
             {error ? (
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <ThemedText type="small" themeColor="textSecondary">
                   {error}
                 </ThemedText>
@@ -199,7 +200,7 @@ export default function TeamScreen() {
 
             {/* The day in one block, before any of the per-person detail. */}
             {t ? (
-              <ThemedView type="backgroundElement" style={styles.summary}>
+              <ThemedView type="card" style={styles.summary}>
                 <View style={styles.sumRow}>
                   <Sum label="Out now" value={`${t.active}/${t.people}`} tint={GREEN} />
                   <Sum label="Onboarded" value={String(t.onboarded)} />
@@ -343,7 +344,7 @@ export default function TeamScreen() {
             })}
 
             {data && data.team.length === 0 ? (
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <ThemedText type="small" themeColor="textSecondary">
                   No agronomists on the team yet.
                 </ThemedText>
@@ -367,13 +368,10 @@ export default function TeamScreen() {
 
 function TopBar({ title, onBack, theme }: { title: string; onBack: () => void; theme: any }) {
   return (
-    <View style={styles.topBar}>
-      <Pressable onPress={onBack} hitSlop={12}>
-        <Ionicons name="chevron-back" size={26} color={theme.text} />
-      </Pressable>
-      <ThemedText type="smallBold">{title}</ThemedText>
-      <View style={{ width: 26 }} />
-    </View>
+    <ScreenHeader
+      onBack={onBack}
+      title={title}
+    />
   );
 }
 
@@ -405,13 +403,6 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   locked: {
     flex: 1,
     alignItems: 'center',

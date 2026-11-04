@@ -14,12 +14,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { FilterPicker } from '@/components/filter-picker';
@@ -144,6 +145,8 @@ function fmtStamp(iso?: string) {
 export default function OnboardedScreen() {
   const params = useLocalSearchParams<{ scope?: string; t?: string }>();
   const theme = useTheme();
+  // Phones narrower than this get a tighter farmer row.
+  const compact = useContentWidth() < 360;
   const scheme = useColorScheme();
   const router = useRouter();
   const { user } = useAuth();
@@ -522,8 +525,8 @@ export default function OnboardedScreen() {
                 key={f._id}
                 onPress={() => router.push({ pathname: '/farmer', params: { farmerId: f._id, name: f.name } })}
                 style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}>
-                <View style={styles.cardBody}>
-                  <View style={styles.avatar}>
+                <View style={[styles.cardBody, compact && { gap: Spacing.two }]}>
+                  <View style={[styles.avatar, compact && styles.avatarCompact]}>
                     <ThemedText style={styles.avatarText}>
                       {f.name?.charAt(0)?.toUpperCase() ?? '?'}
                     </ThemedText>
@@ -532,7 +535,7 @@ export default function OnboardedScreen() {
                     <ThemedText type="smallBold" numberOfLines={1}>
                       {f.name}
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
+                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                       {f.mobile}
                     </ThemedText>
                     {/* Did this agronomist register them, or were they handed
@@ -560,10 +563,12 @@ export default function OnboardedScreen() {
                           />
                           <ThemedText
                             type="small"
+                            numberOfLines={1}
                             style={{
                               color: mine ? GREEN : Brand.secondary,
                               fontWeight: '700',
                               fontSize: 11,
+                              flexShrink: 1,
                             }}>
                             {/* Now that the list is everyone's, whose farmer
                                 this is matters more than whether it is yours. */}
@@ -1012,6 +1017,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Small phones: the name needs the width more than the avatar does.
+  avatarCompact: { width: 36, height: 36, borderRadius: 18 },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   // Outline chip — states the farmer's origin without competing with their name.
   originChip: {
@@ -1019,6 +1026,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     marginTop: 3,
     paddingHorizontal: 6,
     paddingVertical: 2,

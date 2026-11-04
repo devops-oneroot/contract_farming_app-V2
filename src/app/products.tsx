@@ -5,8 +5,9 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { usePostHog } from 'posthog-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -154,20 +155,15 @@ export default function ProductsScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">
-            {winStart != null
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title={winStart != null
               ? `Day ${winStart}${winEnd != null && winEnd !== winStart ? `–${winEnd}` : ''} · Products`
               : crop
                 ? `${crop} · Products`
                 : 'Products'}
-          </ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+        />
 
         {loading ? (
           <ActivityIndicator style={{ marginTop: Spacing.six }} color={theme.text} />
@@ -180,7 +176,7 @@ export default function ProductsScreen() {
               <View>
                 {/* What to do on this day */}
                 {stepLabel ? (
-                  <ThemedView type="backgroundElement" style={styles.todoCard}>
+                  <ThemedView type="card" style={styles.todoCard}>
                     <View style={styles.todoTop}>
                       <ThemedText style={{ fontSize: 24 }}>{catEmoji}</ThemedText>
                       <View style={{ flex: 1 }}>
@@ -214,7 +210,7 @@ export default function ProductsScreen() {
               </View>
             }
             ListEmptyComponent={
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <ThemedText themeColor="textSecondary" type="small">
                   {error ??
                     (winStart != null
@@ -228,7 +224,7 @@ export default function ProductsScreen() {
             renderItem={({ item }) => {
               const prog = progressMap[item._id];
               return (
-                <ThemedView type="backgroundElement" style={styles.card}>
+                <ThemedView type="card" style={styles.card}>
                   <View style={styles.cardTop}>
                     {item.imageUrl ? (
                       <Image source={{ uri: item.imageUrl }} style={styles.image} contentFit="cover" />
@@ -254,7 +250,7 @@ export default function ProductsScreen() {
                         <TappablePhoto uri={prog.imageUrl} style={styles.proofThumb} caption="proof photo" />
                         <View style={styles.doneTag}>
                           <Ionicons name="checkmark-circle" size={16} color="#2e9e5b" />
-                          <ThemedText type="small" style={{ color: '#2e9e5b' }}>
+                          <ThemedText type="small" style={{ color: '#FF7F00' }}>
                             Photo added
                           </ThemedText>
                         </View>
@@ -299,20 +295,13 @@ export default function ProductsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six, gap: Spacing.two },
   hint: { marginBottom: Spacing.two, paddingHorizontal: Spacing.one },
   todoCard: {
     padding: Spacing.four,
     borderRadius: Spacing.three,
     borderLeftWidth: 4,
-    borderLeftColor: '#2e9e5b',
+    borderLeftColor: '#FF7F00',
     marginBottom: Spacing.three,
   },
   todoTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
@@ -323,7 +312,7 @@ const styles = StyleSheet.create({
   image: { width: 64, height: 64, borderRadius: Spacing.two },
   imagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  nowBadge: { backgroundColor: '#2e9e5b', paddingHorizontal: Spacing.two, paddingVertical: 1, borderRadius: 10 },
+  nowBadge: { backgroundColor: '#FF7F00', paddingHorizontal: Spacing.two, paddingVertical: 1, borderRadius: 10 },
   nowText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   photoRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   proofThumb: { width: 40, height: 40, borderRadius: 8 },

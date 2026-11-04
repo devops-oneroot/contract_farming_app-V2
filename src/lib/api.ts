@@ -540,6 +540,28 @@ export type DiseaseReply = {
 };
 
 /** A crop that looked diseased, sent up for advice. */
+/** One entry in a field executive's stock ledger. `qty` is signed: + in, - out. */
+export type StockLedgerEntry = {
+  kind: 'opening' | 'issue' | 'return' | 'adjust' | 'sale';
+  at: string;
+  product: string;
+  variant: string | null;
+  name: string;
+  unit: string;
+  qty: number;
+  /** The office's note, or for a sale the buyer and invoice number. */
+  note: string;
+  /** That product's balance after this entry. */
+  balance: number;
+};
+
+export type StockLedger = {
+  /** When their stock started being counted; null if it never was. */
+  since: string | null;
+  lines: { product: string; variant: string | null; name: string; unit: string; inHand: number }[];
+  days: { day: string; received: number; sold: number; entries: StockLedgerEntry[] }[];
+};
+
 export type DiseaseReport = {
   _id: string;
   reporter: string | { _id: string; name: string; mobile: string; role: Role };
@@ -554,6 +576,8 @@ export type DiseaseReport = {
   sentToName: string;
   photos: string[];
   note: string;
+  voiceNoteUrl?: string;
+  voiceNoteSeconds?: number;
   location: { latitude: number | null; longitude: number | null };
   status: 'open' | 'answered';
   replies: DiseaseReply[];
@@ -927,7 +951,7 @@ export const api = {
   // Edit profile: name / location / geofence polygon.
   updateProfile: (
     id: string,
-    body: { name?: string; location?: { latitude: number | null; longitude: number | null }; geofence?: GeoPoint[] }
+    body: { name?: string; mobile?: string; location?: { latitude: number | null; longitude: number | null }; geofence?: GeoPoint[] }
   ) => request<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   // Farmers mapped to a specific agronomist. `search` filters by name/mobile on the
@@ -1118,6 +1142,8 @@ export const api = {
     latitude?: number | null;
     longitude?: number | null;
     photos: { uri: string; name: string; type: string }[];
+    /** The problem described by voice instead of typing. */
+    voiceNote?: { uri: string; name: string; type: string; seconds: number } | null;
   }): Promise<DiseaseReport> => {
     const form = new FormData();
     form.append('reporterId', body.reporterId);
@@ -1129,6 +1155,11 @@ export const api = {
     if (body.latitude != null) form.append('latitude', String(body.latitude));
     if (body.longitude != null) form.append('longitude', String(body.longitude));
     body.photos.forEach((p) => form.append('photos', p as any));
+    if (body.voiceNote) {
+      const { seconds, ...file } = body.voiceNote;
+      form.append('voiceNote', file as any);
+      form.append('voiceNoteSeconds', String(seconds));
+    }
     const res = await fetch(`${BASE_URL}/api/disease-reports`, { method: 'POST', body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not send the report');
@@ -1139,6 +1170,10 @@ export const api = {
    * `reporterId` for an agent's own. `seniorId` for a senior's inbox — what was
    * addressed to them plus anything sent to whoever is free.
    */
+  /** The agent's own stock ledger: what they were given and sold, day by day. */
+  myStockLedger: (userId: string, days = 30) =>
+    request<StockLedger>(`/api/stock/mine/${userId}/ledger?days=${days}`),
+
   listDiseaseReports: (params?: {
     reporterId?: string;
     seniorId?: string;

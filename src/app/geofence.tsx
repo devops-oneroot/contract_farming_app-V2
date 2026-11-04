@@ -4,9 +4,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 import { WebView } from 'react-native-webview';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -63,8 +64,8 @@ function mapHtml(center: [number, number], initial: GeoPoint[]) {
   function render(){
     markers.forEach(function(m){map.removeLayer(m)}); markers=[];
     if(poly){map.removeLayer(poly); poly=null;}
-    pts.forEach(function(p){ markers.push(L.circleMarker([p.latitude,p.longitude],{radius:6,color:'#fff',weight:2,fillColor:'#2e9e5b',fillOpacity:1}).addTo(map)); });
-    if(pts.length>=2){ poly=L.polygon(pts.map(function(p){return [p.latitude,p.longitude]}),{color:'#2e9e5b',weight:3,fillOpacity:0.25}).addTo(map); }
+    pts.forEach(function(p){ markers.push(L.circleMarker([p.latitude,p.longitude],{radius:6,color:'#fff',weight:2,fillColor:'#FF7F00',fillOpacity:1}).addTo(map)); });
+    if(pts.length>=2){ poly=L.polygon(pts.map(function(p){return [p.latitude,p.longitude]}),{color:'#FF7F00',weight:3,fillOpacity:0.25}).addTo(map); }
     info();
     post();
   }
@@ -225,14 +226,11 @@ export default function GeofenceScreen() {
   if (phase === 'intro') {
     return (
       <ThemedView style={styles.container}>
-        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={12}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">Farm boundary</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+        <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title="Farm boundary"
+          />
 
           <View style={styles.introBody}>
             {/* Tutorial video (or illustrated guide if no video is set) */}
@@ -302,24 +300,24 @@ export default function GeofenceScreen() {
   // ---- Draw phase ----
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => setPhase('intro')} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">
-            {name ? `${name}'s farm` : 'Draw your farm'} ({points.length})
-          </ThemedText>
-          <Pressable onPress={save} disabled={saving} hitSlop={12}>
-            {saving ? (
-              <ActivityIndicator color={GREEN} />
-            ) : (
-              <ThemedText type="smallBold" style={{ color: GREEN }}>
-                Save
-              </ThemedText>
-            )}
-          </Pressable>
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => setPhase('intro')}
+          title={<>{name ? `${name}'s farm` : 'Draw your farm'} ({points.length})</>}
+          right={
+            <>
+              <Pressable onPress={save} disabled={saving} hitSlop={12}>
+                {saving ? (
+                  <ActivityIndicator color={GREEN} />
+                ) : (
+                  <ThemedText type="smallBold" style={{ color: GREEN }}>
+                    Save
+                  </ThemedText>
+                )}
+              </Pressable>
+            </>
+          }
+        />
 
         {center ? (
           <WebView
@@ -346,13 +344,6 @@ export default function GeofenceScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   introBody: { flex: 1, paddingHorizontal: Spacing.four },
   video: { height: 200, borderRadius: Spacing.four, overflow: 'hidden' },
   videoPlaceholder: { backgroundColor: '#1f2d24', alignItems: 'center', justifyContent: 'center' },

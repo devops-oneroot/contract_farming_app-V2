@@ -13,8 +13,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { FilterPicker } from '@/components/filter-picker';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -239,7 +240,7 @@ export default function ProductsGivenScreen() {
                 } as never)
         }
         style={({ pressed }) => !toFpo && pressed && { opacity: 0.7 }}>
-        <ThemedView type="backgroundElement" style={styles.card}>
+        <ThemedView type="card" style={styles.card}>
           <View style={styles.cardHead}>
             {/* Onboarding photo when there is one; initial otherwise, so the
                 row never collapses to a different height. */}
@@ -377,24 +378,26 @@ export default function ProductsGivenScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Products given</ThemedText>
-          {/* Sales made on the field get recorded on the field. This is for the
-              ones that did not — a sale from last week that never got typed
-              in. It lives here rather than on a farmer's page because that is
-              how the gap is noticed: looking at this list and missing a row. */}
-          <Pressable
-            onPress={() => router.push('/old-sale-buyer' as never)}
-            hitSlop={10}
-            accessibilityLabel="Add an old sale that was not recorded"
-            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.75 }]}>
-            <Ionicons name="add" size={18} color="#fff" />
-          </Pressable>
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Products given"
+          right={
+            <>
+              {/* Sales made on the field get recorded on the field. This is for the
+                  ones that did not — a sale from last week that never got typed
+                  in. It lives here rather than on a farmer's page because that is
+                  how the gap is noticed: looking at this list and missing a row. */}
+              <Pressable
+                onPress={() => router.push('/old-sale-buyer' as never)}
+                hitSlop={10}
+                accessibilityLabel="Add an old sale that was not recorded"
+                style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.75 }]}>
+                <Ionicons name="add" size={18} color="#fff" />
+              </Pressable>
+            </>
+          }
+        />
 
         {/* Kept out of the list: an agent filtering a long history should not
             have to scroll back up to change what they searched for. */}
@@ -536,7 +539,7 @@ export default function ProductsGivenScreen() {
             onEndReached={loadMore}
             ListHeaderComponent={
               sales.length > 0 ? (
-                <ThemedView type="backgroundElement" style={styles.summary}>
+                <ThemedView type="card" style={styles.summary}>
                   <View style={styles.summaryCell}>
                     <ThemedText type="smallBold" style={{ color: GREEN }}>
                       {totals.count}
@@ -565,7 +568,7 @@ export default function ProductsGivenScreen() {
               ) : null
             }
             ListEmptyComponent={
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <Ionicons
                   name={searching ? 'search-outline' : 'cube-outline'}
                   size={36}
@@ -642,13 +645,6 @@ const styles = StyleSheet.create({
     backgroundColor: GREEN,
   },
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   tools: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.two, gap: Spacing.two },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

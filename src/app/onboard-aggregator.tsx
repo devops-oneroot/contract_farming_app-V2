@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
 import { useState } from 'react';
@@ -12,8 +11,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -68,15 +68,12 @@ export default function OnboardAggregatorScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">Onboard Aggregator</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title="Onboard Aggregator"
+          />
 
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
             <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
@@ -145,13 +142,6 @@ export default function OnboardAggregatorScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   fieldLabel: { marginTop: Spacing.three },
   input: {

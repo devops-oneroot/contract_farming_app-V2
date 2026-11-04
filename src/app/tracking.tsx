@@ -15,8 +15,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -278,14 +279,11 @@ export default function TrackingScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">My Day</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="My Day"
+        />
 
         {loading ? (
           <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
@@ -294,7 +292,7 @@ export default function TrackingScreen() {
             contentContainerStyle={styles.body}
             refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
             {/* The one control: start or end. */}
-            <ThemedView type="backgroundElement" style={styles.hero}>
+            <ThemedView type="card" style={styles.hero}>
               <View
                 style={[
                   styles.dot,
@@ -418,7 +416,7 @@ export default function TrackingScreen() {
                 { label: 'Visits', value: String(stats?.visits ?? 0), icon: 'location' as const },
                 { label: 'Sales', value: `₹${(stats?.salesTotal ?? 0).toLocaleString('en-IN')}`, icon: 'cart' as const },
               ].map((s) => (
-                <ThemedView key={s.label} type="backgroundElement" style={styles.statCard}>
+                <ThemedView key={s.label} type="card" style={styles.statCard}>
                   <Ionicons name={s.icon} size={16} color={GREEN} />
                   <ThemedText type="smallBold" style={{ fontSize: 18 }}>
                     {s.value}
@@ -446,7 +444,7 @@ export default function TrackingScreen() {
                 </ThemedText>
                 {history.map((s) =>
                   s.kind === 'no_field' ? (
-                    <ThemedView key={s._id} type="backgroundElement" style={styles.histRow}>
+                    <ThemedView key={s._id} type="card" style={styles.histRow}>
                       <Ionicons name="rainy-outline" size={18} color={Brand.accent} />
                       <View style={{ flex: 1, marginLeft: Spacing.two }}>
                         <ThemedText type="smallBold">{fmtDay(s.startAt)}</ThemedText>
@@ -456,7 +454,7 @@ export default function TrackingScreen() {
                       </View>
                     </ThemedView>
                   ) : (
-                    <ThemedView key={s._id} type="backgroundElement" style={styles.histRow}>
+                    <ThemedView key={s._id} type="card" style={styles.histRow}>
                       <View style={{ flex: 1 }}>
                         <ThemedText type="smallBold">{fmtDay(s.startAt)}</ThemedText>
                         <ThemedText type="small" themeColor="textSecondary">
@@ -628,13 +626,6 @@ export default function TrackingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   hero: {
     alignItems: 'center',

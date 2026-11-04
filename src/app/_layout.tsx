@@ -3,8 +3,12 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { PostHogProvider } from 'posthog-react-native';
 import { useEffect } from 'react';
-import { LogBox, useColorScheme } from 'react-native';
+import { LogBox, Platform, StyleSheet, View } from 'react-native';
 
+import { AppSplash } from '@/components/app-splash';
+import { LocationGate } from '@/components/location-gate';
+import { Brand, MaxContentWidth } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
 import { registerForPush } from '@/lib/push';
 // Imported for its side effect: the background location task must be defined
@@ -51,30 +55,45 @@ function RootNavigation() {
   }, [user?._id]);
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="onboarding" />
-      <Stack.Screen name="login" />
-      <Stack.Screen name="signup" />
-    </Stack>
+    // On a tablet or a desktop browser the app is a centred column, not phone
+    // screens stretched edge to edge. A phone is narrower than the cap, so
+    // nothing changes there.
+    <View style={styles.frame}>
+      <View style={styles.column}>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="signup" />
+        </Stack>
+        {/* Location must stay on while signed in - it records visits and the day's distance. */}
+        {user && Platform.OS !== 'web' ? <LocationGate key={user._id} role={user.role} /> : null}
+      </View>
+      {/* Over everything, the full window wide, until the app is ready. */}
+      <AppSplash ready={!loading} />
+    </View>
   );
 }
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const app = (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AuthProvider>
-        <RootNavigation />
-      </AuthProvider>
-    </ThemeProvider>
-  );
-
-  // Wrap in PostHog analytics when a key is configured (autocaptures screens + taps).
-  if (!POSTHOG_KEY) return app;
+  // Always provide a PostHog client so usePostHog() has one; with no key configured
+  // the SDK is disabled (no network, no tracking). Autocaptures screens + taps when on.
   return (
-    <PostHogProvider apiKey={POSTHOG_KEY} options={{ host: POSTHOG_HOST }} autocapture>
-      {app}
+    <PostHogProvider
+      apiKey={POSTHOG_KEY || 'phc_disabled'}
+      options={{ host: POSTHOG_HOST, disabled: !POSTHOG_KEY }}
+      autocapture={!!POSTHOG_KEY}>
+      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <AuthProvider>
+          <RootNavigation />
+        </AuthProvider>
+      </ThemeProvider>
     </PostHogProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  frame: { flex: 1, backgroundColor: Brand.surface },
+  column: { flex: 1, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+});

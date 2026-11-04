@@ -1,11 +1,17 @@
+import { isRunningInExpoGo } from 'expo';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { api } from '@/lib/api';
 
+// Expo Go (SDK 53+) dropped remote push and errors as soon as expo-notifications is
+// imported, so only load it in a dev/production build.
+const Notifications: typeof import('expo-notifications') | null = isRunningInExpoGo()
+  ? null
+  : require('expo-notifications');
+
 // Show notifications while the app is foregrounded.
-Notifications.setNotificationHandler({
+Notifications?.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
@@ -18,7 +24,7 @@ Notifications.setNotificationHandler({
 // No-ops gracefully in Expo Go / simulators / when permission is denied.
 export async function registerForPush(userId: string) {
   try {
-    if (!Device.isDevice) return; // push only works on a physical device
+    if (!Notifications || !Device.isDevice) return; // push needs a dev build on a physical device
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
@@ -39,6 +45,6 @@ export async function registerForPush(userId: string) {
     const { data: token } = await Notifications.getDevicePushTokenAsync();
     if (token) await api.savePushToken(userId, String(token));
   } catch {
-    // Expo Go can't get a native FCM token — ignore until a dev build is used.
+    // No FCM token available (e.g. missing google-services.json) — ignore.
   }
 }

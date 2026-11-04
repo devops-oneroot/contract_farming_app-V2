@@ -16,17 +16,20 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { SafeAreaView, TOP_GAP } from '@/components/safe-area-view';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
+import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, isAgronomist, Role } from '@/lib/api';
+import { confirmAction } from '@/lib/confirm';
+import { PHOTO_CREDITS } from '@/constants/photos';
 
-const LOGO = require('@/assets/images/logo.png');
 const GREEN = Brand.primary;
 
 /**
@@ -47,7 +50,8 @@ function bundleLabel() {
   const id = Updates.updateId ? Updates.updateId.slice(0, 8) : null;
   return ['update', when, id].filter(Boolean).join(' · ');
 }
-const GREEN_DARK = '#2f7d46';
+// The header band: the brand's deep orange, so white text reads on it.
+const GREEN_DARK = Brand.primaryDark;
 const GREEN_SURFACE = Brand.surface;
 
 /**
@@ -79,18 +83,28 @@ export default function ProfileScreen() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
+  const [editMobile, setEditMobile] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
   const openEdit = () => {
     setEditName(user?.name ?? '');
+    setEditMobile(user?.mobile ?? '');
     setEditOpen(true);
   };
 
   const saveEdit = async () => {
     if (!user || !editName.trim()) return;
+    const mobile = editMobile.trim();
+    if (!/^\d{7,15}$/.test(mobile)) {
+      Alert.alert('Invalid number', 'Please enter a valid phone number.');
+      return;
+    }
     setSavingEdit(true);
     try {
-      const updated = await api.updateProfile(user._id, { name: editName.trim() });
+      const updated = await api.updateProfile(user._id, {
+        name: editName.trim(),
+        ...(mobile !== user.mobile ? { mobile } : {}),
+      });
       await signIn(updated);
       setEditOpen(false);
     } catch (e: any) {
@@ -102,12 +116,16 @@ export default function ProfileScreen() {
 
   const geofenceCount = user?.geofence?.length ?? 0;
 
-  const confirmSignOut = () => {
-    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => signOut() },
-    ]);
-  };
+  const confirmSignOut = () =>
+    confirmAction({
+      title: 'Sign out',
+      message: 'Are you sure you want to sign out?',
+      confirmText: 'Sign out',
+      destructive: true,
+      onConfirm: () => {
+        signOut().catch(() => {});
+      },
+    });
 
   const hasLocation = user?.location?.latitude != null && user?.location?.longitude != null;
 
@@ -128,15 +146,17 @@ export default function ProfileScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       {/* Curved green header */}
-      <View style={[styles.headerBand, { paddingTop: insets.top + Spacing.two }]}>
+      <View style={[styles.headerBand, { paddingTop: insets.top + TOP_GAP + Spacing.two }]}>
         <View style={styles.topRow}>
-          <View style={styles.brandRow}>
-            <Image source={LOGO} style={styles.brandLogo} contentFit="contain" />
-            <ThemedText style={styles.brandName}>OneRoot</ThemedText>
-          </View>
-          <Pressable onPress={openEdit} hitSlop={10} style={styles.editBtn}>
-            <Ionicons name="create-outline" size={16} color="#fff" />
-            <ThemedText style={styles.editText}>Edit</ThemedText>
+          <Image source={Logos.horizontalWhite} style={styles.brandLogo} contentFit="contain" accessibilityLabel="OneRoot" />
+          {/* At the top, in red: easy to find, and clearly not a normal action. */}
+          <Pressable
+            onPress={confirmSignOut}
+            hitSlop={6}
+            accessibilityLabel="Log out"
+            style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.85 }]}>
+            <Ionicons name="log-out-outline" size={16} color="#fff" />
+            <ThemedText style={styles.signOutText}>Log Out</ThemedText>
           </Pressable>
         </View>
         <View style={styles.avatar}>
@@ -150,11 +170,24 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Scrolls so a short phone can still reach Log Out and the footer;
-          `flexGrow` keeps them pinned to the bottom when the content is short. */}
+      {/* Scrolls so a short phone can still reach the footer; `flexGrow`
+          keeps it pinned to the bottom when the content is short. */}
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {/* Account details */}
-        <ThemedView style={styles.card}>
+        {/* Account details, with Edit right above the values it changes. */}
+        <View style={styles.sectionHead}>
+          <ThemedText type="smallBold" style={{ flex: 1 }}>
+            Account details
+          </ThemedText>
+          <Pressable
+            onPress={openEdit}
+            hitSlop={8}
+            accessibilityLabel="Edit profile"
+            style={({ pressed }) => [styles.editBtn, pressed && { opacity: 0.8 }]}>
+            <Ionicons name="create-outline" size={15} color={GREEN} />
+            <ThemedText style={styles.editText}>Edit</ThemedText>
+          </Pressable>
+        </View>
+        <ThemedView style={[styles.card, { marginTop: -Spacing.two }]}>
           {infoRows.map((r, i) => (
             <View key={r.label} style={[styles.row, i < infoRows.length - 1 && divider]}>
               <View style={styles.rowIcon}>
@@ -219,7 +252,10 @@ export default function ProfileScreen() {
           </Pressable>
           <Pressable
             onPress={() =>
-              Alert.alert('OneRoot', 'OneRoot — contract farming, simplified.\n\nSupport: 9606031878\nVersion 1.0.0')
+              Alert.alert(
+                'OneRoot',
+                `OneRoot — contract farming, simplified.\n\nSupport: 9606031878\nVersion 1.0.0\n\nPhotos:\n${PHOTO_CREDITS.join('\n')}`
+              )
             }
             style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}>
             <View style={styles.rowIcon}>
@@ -232,19 +268,9 @@ export default function ProfileScreen() {
           </Pressable>
         </ThemedView>
 
-        {/* Sign out */}
-        <Pressable
-          onPress={confirmSignOut}
-          style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.85 }]}>
-          <Ionicons name="log-out-outline" size={20} color="#fff" />
-          <ThemedText type="smallBold" style={{ color: '#fff' }}>
-            Log Out
-          </ThemedText>
-        </Pressable>
-
         {/* Footer pinned to bottom */}
         <View style={styles.footer}>
-          <Image source={LOGO} style={styles.footerLogo} contentFit="contain" />
+          <Image source={Logos.horizontal} style={styles.footerLogo} contentFit="contain" />
           <ThemedText type="small" themeColor="textSecondary">
             OneRoot · Contract farming, simplified
           </ThemedText>
@@ -285,8 +311,20 @@ export default function ProfileScreen() {
                 autoFocus
                 style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
               />
+              <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>
+                Mobile
+              </ThemedText>
+              <TextInput
+                value={editMobile}
+                onChangeText={setEditMobile}
+                placeholder="Mobile number"
+                placeholderTextColor={theme.textSecondary}
+                keyboardType="phone-pad"
+                maxLength={15}
+                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+              />
               <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                Mobile {user?.mobile} can’t be changed (it’s your login).
+                This is your login — sign in with the new number next time.
               </ThemedText>
 
               <Pressable
@@ -321,19 +359,19 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 28,
   },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  brandLogo: { width: 22, height: 22 },
-  brandName: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  brandLogo: { height: 22, width: 22 * LogoAspect.horizontal },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.one },
   editBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: Brand.primarySurface,
     paddingHorizontal: Spacing.three,
     paddingVertical: 6,
     borderRadius: Spacing.four,
   },
-  editText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  editText: { color: GREEN, fontSize: 13, fontWeight: '700' },
+  signOutText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   avatar: {
     width: 78,
     height: 78,
@@ -368,24 +406,22 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(46,158,91,0.12)',
+    backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Same shape as Edit beside it, in the danger red.
   signOut: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    alignSelf: 'center',
-    paddingHorizontal: Spacing.six,
-    paddingVertical: Spacing.two + 2,
+    gap: 4,
+    backgroundColor: Brand.danger,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 6,
     borderRadius: Spacing.four,
-    backgroundColor: '#6e1414',
-    marginTop: 'auto',
   },
-  footer: { alignItems: 'center', gap: 3, marginTop: Spacing.four },
-  footerLogo: { width: 34, height: 34, opacity: 0.9, marginBottom: 2 },
+  footer: { alignItems: 'center', gap: 3, marginTop: 'auto', paddingTop: Spacing.four },
+  footerLogo: { height: 18, width: 18 * LogoAspect.horizontal, marginBottom: 4 },
   version: { color: '#9aa0a6' },
   editTopBar: {
     flexDirection: 'row',

@@ -8,11 +8,19 @@ export type ThemedTextProps = TextProps & {
   themeColor?: ThemeColor;
 };
 
+/**
+ * Text still follows the phone's font-size setting, up to 1.3x. Beyond that,
+ * labels in fixed-size cards, tiles and buttons overflow and get cut off; a
+ * screen can pass its own `maxFontSizeMultiplier` to allow more.
+ */
+const MAX_FONT_SCALE = 1.3;
+
 export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
   const theme = useTheme();
 
   return (
     <Text
+      maxFontSizeMultiplier={MAX_FONT_SCALE}
       style={[
         { color: theme[themeColor ?? 'text'] },
         type === 'default' && styles.default,

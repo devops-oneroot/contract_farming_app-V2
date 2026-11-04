@@ -3,6 +3,7 @@ import { usePostHog } from 'posthog-react-native';
 import { createContext, useContext, useEffect, useState } from 'react';
 
 import { User } from '@/lib/api';
+import { detachTracking } from '@/lib/tracking';
 
 const STORAGE_KEY = 'oneroot.user';
 const ONBOARD_KEY = 'oneroot.onboarded';
@@ -59,9 +60,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    posthog?.reset();
+    // Analytics must never be the reason someone cannot sign out.
+    try {
+      posthog?.reset();
+    } catch {}
+    // Capped: with no signal, sending the last buffered points could hang, and
+    // the agent must still get to the login screen.
+    await Promise.race([detachTracking().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+    await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+    // Last: this is what sends the app to the login screen.
     setUser(null);
-    await AsyncStorage.removeItem(STORAGE_KEY);
   };
 
   return (

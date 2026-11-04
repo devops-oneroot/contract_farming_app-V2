@@ -6,16 +6,17 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { DayWorkSheet } from '@/components/day-work-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { Agenda, api } from '@/lib/api';
@@ -65,7 +66,7 @@ export default function CalendarScreen() {
   const scheme = useColorScheme();
   const router = useRouter();
   const { user } = useAuth();
-  const { width } = useWindowDimensions();
+  const width = useContentWidth();
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const today = new Date();
@@ -122,23 +123,25 @@ export default function CalendarScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Calendar</ThemedText>
-          <Pressable
-            onPress={() => {
-              setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-              setSelected(new Date());
-            }}
-            hitSlop={10}>
-            <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
-              Today
-            </ThemedText>
-          </Pressable>
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Calendar"
+          right={
+            <>
+              <Pressable
+                onPress={() => {
+                  setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+                  setSelected(new Date());
+                }}
+                hitSlop={10}>
+                <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                  Today
+                </ThemedText>
+              </Pressable>
+            </>
+          }
+        />
 
         <ScrollView contentContainerStyle={styles.body}>
           <View style={styles.monthBar}>
@@ -240,7 +243,7 @@ export default function CalendarScreen() {
             </View>
             {dueToday.length ? (
               dueToday.map((f) => (
-                <ThemedView key={f.id} type="backgroundElement" style={styles.row}>
+                <ThemedView key={f.id} type="card" style={styles.row}>
                   <View style={{ flex: 1 }}>
                     <ThemedText type="small" style={{ fontWeight: '700' }} numberOfLines={1}>
                       {f.name || 'Farmer'}
@@ -340,13 +343,6 @@ export default function CalendarScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   monthBar: {
     flexDirection: 'row',

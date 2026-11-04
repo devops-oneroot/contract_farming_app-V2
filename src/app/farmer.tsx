@@ -16,8 +16,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -245,14 +246,11 @@ export default function FarmerScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">{name ?? 'Farmer'}</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title={name ?? 'Farmer'}
+        />
 
         {loading ? (
           <ActivityIndicator style={{ marginTop: Spacing.six }} color={theme.text} />
@@ -265,8 +263,8 @@ export default function FarmerScreen() {
               <View style={{ marginBottom: Spacing.three, gap: Spacing.three }}>
                 {/* Farmer details — editable by their agronomist */}
                 <Pressable onPress={openEdit} style={({ pressed }) => pressed && { opacity: 0.85 }}>
-                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
-                    <View style={[styles.geoIcon, { backgroundColor: '#2e9e5b' }]}>
+                  <ThemedView type="card" style={styles.geoBtn}>
+                    <View style={[styles.geoIcon, { backgroundColor: '#FF7F00' }]}>
                       <ThemedText style={styles.avatarText}>
                         {(farmerName || name || '?').charAt(0).toUpperCase()}
                       </ThemedText>
@@ -289,7 +287,7 @@ export default function FarmerScreen() {
                     })
                   }
                   style={({ pressed }) => pressed && { opacity: 0.85 }}>
-                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                  <ThemedView type="card" style={styles.geoBtn}>
                     <View style={styles.geoIcon}>
                       <Ionicons name="map" size={18} color="#fff" />
                     </View>
@@ -315,7 +313,7 @@ export default function FarmerScreen() {
                     })
                   }
                   style={({ pressed }) => pressed && { opacity: 0.85 }}>
-                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                  <ThemedView type="card" style={styles.geoBtn}>
                     <View style={[styles.geoIcon, { backgroundColor: AMBER }]}>
                       <Ionicons name="camera" size={18} color="#fff" />
                     </View>
@@ -342,7 +340,7 @@ export default function FarmerScreen() {
                     })
                   }
                   style={({ pressed }) => pressed && { opacity: 0.85 }}>
-                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                  <ThemedView type="card" style={styles.geoBtn}>
                     <View style={[styles.geoIcon, { backgroundColor: Brand.danger }]}>
                       <Ionicons name="bug" size={18} color="#fff" />
                     </View>
@@ -365,7 +363,7 @@ export default function FarmerScreen() {
                     })
                   }
                   style={({ pressed }) => pressed && { opacity: 0.85 }}>
-                  <ThemedView type="backgroundElement" style={styles.geoBtn}>
+                  <ThemedView type="card" style={styles.geoBtn}>
                     <View style={[styles.geoIcon, { backgroundColor: Brand.secondary }]}>
                       <Ionicons name="cart" size={18} color="#fff" />
                     </View>
@@ -396,7 +394,7 @@ export default function FarmerScreen() {
               </View>
             }
             ListEmptyComponent={
-              <ThemedView type="backgroundElement" style={styles.empty}>
+              <ThemedView type="card" style={styles.empty}>
                 <ThemedText themeColor="textSecondary" type="small">
                   {error ?? 'This farmer has not added any crops yet.'}
                 </ThemedText>
@@ -431,7 +429,7 @@ export default function FarmerScreen() {
                      */
                     const latest = i === 0;
                     return (
-                      <ThemedView key={v._id} type="backgroundElement" style={styles.saleCard}>
+                      <ThemedView key={v._id} type="card" style={styles.saleCard}>
                         <View style={styles.saleItemHead}>
                           <ThemedText type="smallBold" style={{ flex: 1 }}>
                             {fmt(new Date(v.visitedAt))}
@@ -598,7 +596,7 @@ export default function FarmerScreen() {
                     Products given ({sales.length})
                   </ThemedText>
                   {sales.map((s) => (
-                    <ThemedView key={s._id} type="backgroundElement" style={styles.saleCard}>
+                    <ThemedView key={s._id} type="card" style={styles.saleCard}>
                       <View style={styles.saleTop}>
                         <View style={{ flex: 1 }}>
                           <ThemedText type="smallBold">
@@ -777,7 +775,7 @@ export default function FarmerScreen() {
                       : openEdit()
                   }
                   style={({ pressed }) => pressed && { opacity: 0.7 }}>
-                  <ThemedView type="backgroundElement" style={styles.card}>
+                  <ThemedView type="card" style={styles.card}>
                     <View style={styles.cardTop}>
                       {img ? (
                         <Image source={{ uri: img }} style={styles.cropIcon} contentFit="cover" />
@@ -1049,13 +1047,6 @@ const styles = StyleSheet.create({
     backgroundColor: Brand.dangerSurface,
   },
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   // Crops header + "Add crop", and the add/edit-crop sheet.
   cropsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   addCropBtn: {
@@ -1106,7 +1097,7 @@ const styles = StyleSheet.create({
   doneBtn: { alignItems: 'center', paddingVertical: Spacing.three },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six, gap: Spacing.two },
   geoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
-  geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2e9e5b', alignItems: 'center', justifyContent: 'center' },
+  geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FF7F00', alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.four, borderRadius: Spacing.three, alignItems: 'center' },
   saleCard: { padding: Spacing.three, borderRadius: Spacing.three, marginBottom: Spacing.two },
   /** Download this sale's bill, under its total where the money already is. */
@@ -1169,7 +1160,7 @@ const styles = StyleSheet.create({
   saveBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2e9e5b',
+    backgroundColor: '#FF7F00',
     paddingVertical: Spacing.three,
     borderRadius: Spacing.three,
     marginTop: Spacing.four,

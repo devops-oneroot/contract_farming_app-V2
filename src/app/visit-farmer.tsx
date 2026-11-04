@@ -20,9 +20,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 import { WebView } from 'react-native-webview';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
@@ -68,7 +69,7 @@ function navMapHtml(target: { lat: number; lng: number }, boundary: GeoPoint[]) 
   var layers = [];
   if (B.length >= 3) {
     var poly = L.polygon(B.map(function(p){return [p.latitude,p.longitude]}),
-      {color:'#2e9e5b',weight:3,fillOpacity:0.25}).addTo(map);
+      {color:'#FF7F00',weight:3,fillOpacity:0.25}).addTo(map);
     layers.push(poly);
     map.fitBounds(poly.getBounds(),{padding:[30,30]});
   } else {
@@ -293,15 +294,12 @@ export default function VisitFarmerScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable onPress={() => router.back()} hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">Mark Visit</ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          <ScreenHeader
+            onBack={() => router.back()}
+            title="Mark Visit"
+          />
 
           <ScrollView
             ref={scrollRef}
@@ -549,13 +547,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionLabel: { fontWeight: '700', textAlign: 'center', fontSize: 12 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   // Navigation card: map preview + "Navigate to farm".
   navCard: { marginTop: Spacing.three, gap: Spacing.two },
   mapWrap: {

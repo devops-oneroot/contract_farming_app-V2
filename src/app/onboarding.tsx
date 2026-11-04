@@ -3,12 +3,13 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { useContentWidth } from '@/hooks/use-content-width';
 import { AUTH } from '@/components/auth-scaffold';
+import { LogoAspect, Logos } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 
-const LOGO = require('@/assets/images/logo.png');
 
 const SLIDES = [
   {
@@ -29,7 +30,8 @@ const SLIDES = [
 ];
 
 export default function OnboardingScreen() {
-  const { width, height } = useWindowDimensions();
+  const { height } = useWindowDimensions();
+  const width = useContentWidth();
   const router = useRouter();
   const { completeOnboarding, user } = useAuth();
   const ref = useRef<ScrollView>(null);
@@ -54,8 +56,7 @@ export default function OnboardingScreen() {
         {/* Brand + Skip */}
         <View style={styles.topBar}>
           <View style={styles.brand}>
-            <Image source={LOGO} style={styles.brandLogo} contentFit="contain" />
-            <Text style={styles.brandName}>OneRoot</Text>
+            <Image source={Logos.horizontal} style={styles.brandLogo} contentFit="contain" accessibilityLabel="OneRoot" />
           </View>
           <Pressable onPress={finish} hitSlop={10} style={{ opacity: last ? 0 : 1 }} disabled={last}>
             <Text style={styles.skip}>Skip</Text>
@@ -113,8 +114,7 @@ const styles = StyleSheet.create({
     height: 48,
   },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandLogo: { width: 26, height: 26 },
-  brandName: { fontSize: 17, fontWeight: '800', color: AUTH.btn },
+  brandLogo: { height: 24, width: 24 * LogoAspect.horizontal },
   skip: { color: AUTH.subtitle, fontSize: 15, fontWeight: '600' },
   slide: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 26, gap: 8 },
   imageCard: {

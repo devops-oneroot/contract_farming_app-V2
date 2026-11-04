@@ -14,6 +14,8 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    /** A raised surface - cards, panels, empty states - on the sand screen background. */
+    card: '#FFFFFF',
   },
   dark: {
     text: '#ffffff',
@@ -21,35 +23,39 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    card: '#17191B',
   },
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
 /**
- * Brand palette — "Earth & Leaf". One source of truth; screens must not
- * re-declare these as local hex constants.
+ * Brand palette - from the OneRoot logo (orange wordmark, leaf on the "t").
+ * One source of truth; screens must not re-declare these as local hex
+ * constants.
  *
  * The colours carry meaning, so the app reads at a glance:
- *   primary   (green)      farmers, crops, growth, primary actions
- *   secondary (terracotta) aggregators — the market/buyer side of the app
- *   accent    (amber)      pending, awaiting verification
- *   danger    (red)        errors, and things missing that block work
+ *   primary   (orange #FF7F00, the brand)  brand, primary actions, active state
+ *   secondary (leaf green)                aggregators / the second accent - the
+ *                                         logo's leaf, and the farm in the app
+ *   accent    (gold)                      pending, awaiting verification
+ *   danger    (red)                       errors, and things missing that block work
  *
- * `surface` is a warm neutral rather than a green tint: with every screen
- * washed green, the green stopped meaning anything.
+ * `surface` is a warm neutral rather than a brand tint: with every screen
+ * washed in colour, the colour stopped meaning anything.
  */
 export const Brand = {
-  primary: '#2E9E5B',
-  primaryDark: '#1F7A43',
-  primarySurface: '#E7F5EC',
+  primary: '#FF7F00',
+  /** Deep orange: large fills behind white text (hero), pressed states. */
+  primaryDark: '#CC6600',
+  primarySurface: '#FFF1E0',
 
-  secondary: '#D97742',
-  secondaryDark: '#B85C2E',
-  secondarySurface: '#FBEEE6',
+  secondary: '#2E9E5B',
+  secondaryDark: '#1F7A43',
+  secondarySurface: '#E7F5EC',
 
-  accent: '#F2A93B',
-  accentSurface: '#FEF3E0',
+  accent: '#D9A300',
+  accentSurface: '#FDF6DC',
 
   danger: '#E5484D',
   dangerSurface: '#FDECEC',
@@ -59,6 +65,16 @@ export const Brand = {
   card: '#FFFFFF',
   ink: '#1F2A24',
 } as const;
+
+/** The logo, trimmed and transparent: orange for light backgrounds, white for brand-coloured ones. */
+export const Logos = {
+  horizontal: require('@/assets/images/brand/logo-horizontal.png'),
+  horizontalWhite: require('@/assets/images/brand/logo-horizontal-white.png'),
+  stacked: require('@/assets/images/brand/logo-stacked.png'),
+  stackedWhite: require('@/assets/images/brand/logo-stacked-white.png'),
+} as const;
+/** Width / height of each logo, to size an Image without distorting it. */
+export const LogoAspect = { horizontal: 960 / 182, stacked: 720 / 438 } as const;
 
 export const Fonts = Platform.select({
   ios: {
@@ -126,4 +142,10 @@ export const CardShadow = {
  * row does not sit flush against the bar.
  */
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
-export const MaxContentWidth = 800;
+/**
+ * The widest the app's content gets. On a tablet or desktop browser the app is
+ * a centred column of this width (see app/_layout.tsx) rather than phone
+ * layouts stretched across a wide screen. Size layout from
+ * `useContentWidth()`, not the window, so it matches.
+ */
+export const MaxContentWidth = 720;

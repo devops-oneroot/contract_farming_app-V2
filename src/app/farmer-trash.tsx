@@ -14,8 +14,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
@@ -126,14 +127,11 @@ export default function FarmerTrashScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">Trash</ThemedText>
-          <View style={{ width: 26 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScreenHeader
+          onBack={() => router.back()}
+          title="Trash"
+        />
 
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -142,7 +140,7 @@ export default function FarmerTrashScreen() {
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
           ) : rows.length === 0 ? (
-            <ThemedView type="backgroundElement" style={styles.empty}>
+            <ThemedView type="card" style={styles.empty}>
               <Ionicons name="trash-outline" size={40} color={theme.textSecondary} />
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
                 Nothing here. Farmers you remove land in this trash, and you can put them back.
@@ -313,13 +311,6 @@ export default function FarmerTrashScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   scroll: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.two },
   blurb: { marginBottom: Spacing.two },
   empty: {

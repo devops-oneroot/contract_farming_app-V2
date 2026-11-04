@@ -16,7 +16,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
 import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
@@ -343,7 +343,7 @@ export default function EditFarmerScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -497,7 +497,7 @@ export default function EditFarmerScreen() {
               </ThemedText>
 
               {drafts.map((d, i) => (
-                <ThemedView key={d._id ?? `new-${i}`} type="backgroundElement" style={styles.cropCard}>
+                <ThemedView key={d._id ?? `new-${i}`} type="card" style={styles.cropCard}>
                   <View style={styles.cropHead}>
                     <ThemedText type="smallBold" style={{ flex: 1 }}>
                       {d.name || 'New crop'}

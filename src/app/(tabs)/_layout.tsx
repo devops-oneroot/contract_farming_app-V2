@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Brand, Radius } from '@/constants/theme';
+import { ThemedText } from '@/components/themed-text';
 import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
 import { isAgronomist as isAgronomistRole } from '@/lib/api';
@@ -17,26 +18,26 @@ const GREEN = Brand.primary;
  * fixed height leaves the tabs sitting underneath the Back/Home/Recents keys.
  * Gesture navigation reserves far less, and an older device none at all.
  */
-const BAR_CONTENT_HEIGHT = 56;
+// 56 left the label clipped under the icon well; this fits both with room.
+const BAR_CONTENT_HEIGHT = 64;
 /** Kept clear of the very bottom edge when the system reserves nothing. */
 const MIN_BOTTOM_PAD = 8;
 
 /**
- * Filled when active, outlined when not — the shape carries the state as well
- * as the colour, which survives being glanced at in sunlight.
+ * One tab: icon above its name. The active tab is a soft green pill holding
+ * both, with the icon and name in green - obvious at a glance, even in sunlight. The icon is also
+ * filled when active and outlined when not, so the shape carries the state as
+ * well as the colour.
  */
-function TabIcon({
-  name,
-  color,
-  focused,
-}: {
-  name: string;
-  color: string;
-  focused: boolean;
-}) {
+function TabIcon({ name, label, focused }: { name: string; label: string; focused: boolean }) {
+  const theme = useTheme();
+  const color = focused ? GREEN : theme.textSecondary;
   return (
-    <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-      <Ionicons name={(focused ? name : `${name}-outline`) as never} color={color} size={22} />
+    <View style={[styles.pill, focused && styles.pillActive]}>
+      <Ionicons name={(focused ? name : `${name}-outline`) as never} color={color} size={21} />
+      <ThemedText numberOfLines={1} style={[styles.label, { color }, focused && styles.labelActive]}>
+        {label}
+      </ThemedText>
     </View>
   );
 }
@@ -59,20 +60,21 @@ export default function TabsLayout() {
         tabBarStyle: [
           styles.bar,
           {
-            backgroundColor: theme.background,
-            borderTopColor: theme.backgroundElement,
+            backgroundColor: theme.card,
             height: BAR_CONTENT_HEIGHT + bottomPad,
             paddingBottom: bottomPad,
           },
         ],
+        // The label is drawn inside the pill (TabIcon), so it highlights with the icon.
+        tabBarShowLabel: false,
         tabBarItemStyle: styles.item,
-        tabBarLabelStyle: styles.label,
+        tabBarIconStyle: styles.iconSlot,
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: (p) => <TabIcon name="home" {...p} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="home" label="Home" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -81,7 +83,7 @@ export default function TabsLayout() {
           title: 'Tasks',
           // Agronomist-only tab.
           href: isAgronomist ? undefined : null,
-          tabBarIcon: (p) => <TabIcon name="checkbox" {...p} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="clipboard" label="Tasks" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -89,7 +91,7 @@ export default function TabsLayout() {
         options={{
           title: 'People',
           href: isAgronomist ? undefined : null,
-          tabBarIcon: (p) => <TabIcon name="people" {...p} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="people" label="People" focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -97,14 +99,14 @@ export default function TabsLayout() {
         options={{
           title: 'Calls',
           href: isAgronomist ? undefined : null,
-          tabBarIcon: (p) => <TabIcon name="call" {...p} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="call" label="Calls" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: (p) => <TabIcon name="person" {...p} />,
+          tabBarIcon: ({ focused }) => <TabIcon name="person" label="Profile" focused={focused} />,
         }}
       />
     </Tabs>
@@ -121,18 +123,31 @@ const styles = StyleSheet.create({
     // `height` and `paddingBottom` are set at runtime from the safe-area inset
     // — see BAR_CONTENT_HEIGHT.
     paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    // Lifted off the screen by a soft shadow rather than ruled off by a line,
+    // with the top corners rounded to match the cards above it.
+    borderTopWidth: 0,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 12,
+    ...Platform.select({ web: { boxShadow: '0 -2px 12px rgba(0,0,0,0.08)' } as object }),
   },
-  item: { paddingTop: 2 },
-  label: { fontSize: 11, fontWeight: '700', marginTop: 2 },
-  iconWrap: {
-    width: 40,
-    height: 26,
-    borderRadius: Radius.pill,
+  item: { paddingTop: 0, justifyContent: 'center' },
+  // Room for the pill: by default the icon slot is only as big as an icon.
+  iconSlot: { width: '100%', height: 52 },
+  pill: {
+    minWidth: 64,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
   },
-  // A soft well behind the active icon, so the current tab is obvious even
-  // where the green tint alone is hard to pick out.
-  iconWrapActive: { backgroundColor: Brand.primarySurface },
+  pillActive: { backgroundColor: Brand.primarySurface },
+  label: { fontSize: 11, lineHeight: 14, fontWeight: '600', letterSpacing: 0.1 },
+  labelActive: { fontWeight: '800' },
 });

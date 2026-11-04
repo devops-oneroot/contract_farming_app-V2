@@ -23,13 +23,15 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from '@/components/safe-area-view';
 
+import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
@@ -213,7 +215,8 @@ export default function GiveProductScreen() {
   const router = useRouter();
   const posthog = usePostHog();
   const { user } = useAuth();
-  const { width, height } = useWindowDimensions();
+  const { height } = useWindowDimensions();
+  const width = useContentWidth();
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const params = useLocalSearchParams<{
@@ -747,23 +750,16 @@ export default function GiveProductScreen() {
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.topBar}>
-            <Pressable
-              onPress={() => (step === 'confirm' ? setStep('pick') : router.back())}
-              hitSlop={10}>
-              <Ionicons name="chevron-back" size={26} color={theme.text} />
-            </Pressable>
-            <ThemedText type="smallBold">
-              {backdating
+          <ScreenHeader
+            onBack={() => (step === 'confirm' ? setStep('pick') : router.back())}
+            title={backdating
                 ? step === 'pick'
                   ? 'Add old sale'
                   : 'Confirm old sale'
                 : step === 'pick'
                   ? 'Give product'
                   : 'Confirm sale'}
-            </ThemedText>
-            <View style={{ width: 26 }} />
-          </View>
+          />
 
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={theme.text} />
@@ -1664,13 +1660,6 @@ export default function GiveProductScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-  },
   // ----- Confirm step, laid out as an invoice -----
   /** One item, as a bordered card rather than a tinted block. */
   itemCard: {
