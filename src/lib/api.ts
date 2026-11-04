@@ -1,4 +1,6 @@
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000';
+// Trailing slashes trimmed: every path below starts with '/', and a URL pasted
+// as 'https://host/' made every request '//api/...', which the server answers 404.
+const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000').replace(/\/+$/, '');
 
 export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
 
