@@ -86,6 +86,8 @@ type Offer = {
   unit: string;
   price: number;
   imageUrl: string;
+  /** Whether its price carries 5% GST, set per product from the dashboard. */
+  gst: boolean;
 };
 
 const offerId = (productId: string, variantId: string | null | undefined) =>
@@ -319,6 +321,7 @@ export default function GiveProductScreen() {
               unit: v.label,
               price: v.price,
               imageUrl: p.imageUrl,
+              gst: !!p.gstEnabled,
             }))
           : [
               {
@@ -329,6 +332,7 @@ export default function GiveProductScreen() {
                 unit: p.unit,
                 price: p.price ?? 0,
                 imageUrl: p.imageUrl,
+                gst: !!p.gstEnabled,
               },
             ]
       ),
@@ -439,6 +443,10 @@ export default function GiveProductScreen() {
    * recomputes in exactly this order.
    */
   const subtotal = inCart.reduce((s, p) => s + lineMath(cart[p._id]).net, 0);
+  /** The part of the subtotal from products that carry GST. */
+  const taxedSubtotal = inCart
+    .filter((p) => p.gst)
+    .reduce((s, p) => s + lineMath(cart[p._id]).net, 0);
   const saleOff = useMemo(() => {
     const round = (n: number) => Math.round(n * 100) / 100;
     const entered = Math.max(0, Number(saleDiscount) || 0);
@@ -453,8 +461,15 @@ export default function GiveProductScreen() {
    * quietly shaves the delivery fee. The server adds it in the same place.
    */
   const charges = Math.max(0, Math.round((Number(otherCharges) || 0) * 100) / 100);
-  /** The products alone, after the discount — the 5% side of the bill. */
+  /** The products alone, after the discount. */
   const goods = Math.round((subtotal - saleOff) * 100) / 100;
+  /**
+   * The GST products' share of `goods` — the 5% side of the bill. The basket
+   * discount comes off the taxed and untaxed products in proportion to what
+   * each was worth, the same way the server's bill splits it.
+   */
+  const taxedGoods =
+    subtotal > 0 ? Math.round(((goods * taxedSubtotal) / subtotal) * 100) / 100 : 0;
   const total = Math.round((goods + charges) * 100) / 100;
   /**
    * The bill stated the way a GST invoice states it: every line ex-tax, the tax
@@ -467,7 +482,10 @@ export default function GiveProductScreen() {
    * Subtotal − Discount lands exactly on Taxable Value, with no rounding crumb
    * left visible on the screen.
    */
-  const subtotalEx = useMemo(() => gstSplit(subtotal).taxable, [subtotal]);
+  const subtotalEx = useMemo(
+    () => Math.round((gstSplit(taxedSubtotal).taxable + subtotal - taxedSubtotal) * 100) / 100,
+    [subtotal, taxedSubtotal]
+  );
 
   /**
    * The price on a product is what the farmer pays, tax included — it is the
@@ -482,8 +500,10 @@ export default function GiveProductScreen() {
    *   taxable = total / 1.05      CGST = SGST = taxable x 2.5%
    *   taxable + CGST + SGST = total, to the paisa
    */
-  const tax = useMemo(() => gstSplit(goods), [goods]);
-  const saleOffEx = Math.round((subtotalEx - tax.taxable) * 100) / 100;
+  const tax = useMemo(() => gstSplit(taxedGoods), [taxedGoods]);
+  /** The products net of tax: the GST ones worked back, the rest as they are. */
+  const goodsTaxable = Math.round((tax.taxable + goods - taxedGoods) * 100) / 100;
+  const saleOffEx = Math.round((subtotalEx - goodsTaxable) * 100) / 100;
   /**
    * The courier's own split, at 18%. The figure typed is what is charged, tax
    * included, exactly as a product price is — and its ex-tax value is worked
@@ -492,7 +512,7 @@ export default function GiveProductScreen() {
   const chargesTax = useMemo(() => gstSplit(charges, CHARGES_GST_RATE), [charges]);
   const chargesEx = chargesTax.taxable;
   /** Everything the tax was charged on, both rates together. */
-  const taxableAll = Math.round((tax.taxable + chargesEx) * 100) / 100;
+  const taxableAll = Math.round((goodsTaxable + chargesEx) * 100) / 100;
   const gstAll =
     Math.round((tax.cgst + tax.sgst + chargesTax.cgst + chargesTax.sgst) * 100) / 100;
 
@@ -1284,7 +1304,7 @@ export default function GiveProductScreen() {
                             states a line, with the tax added once at the
                             bottom. It therefore will NOT equal qty x rate. */}
                         <ThemedText type="smallBold" style={styles.qraValue}>
-                          {money(gstSplit(math.gross).taxable)}
+                          {money(p.gst ? gstSplit(math.gross).taxable : math.gross)}
                         </ThemedText>
                       </View>
                     </View>
@@ -1399,7 +1419,7 @@ export default function GiveProductScreen() {
                         Net Amount
                       </ThemedText>
                       <ThemedText type="smallBold" style={styles.netValue}>
-                        {money(gstSplit(math.net).taxable)}
+                        {money(p.gst ? gstSplit(math.net).taxable : math.net)}
                       </ThemedText>
                     </View>
 
@@ -1562,8 +1582,12 @@ export default function GiveProductScreen() {
                       2.5% + 2.5%, the courier at 9% + 9%. Each pair shows its
                       own taxable value, since the rate applies to that alone. */}
                   {[
-                    { key: 'cgst5', type: 'CGST', rate: '2.5%', on: tax.taxable, amount: tax.cgst },
-                    { key: 'sgst5', type: 'SGST', rate: '2.5%', on: tax.taxable, amount: tax.sgst },
+                    ...(taxedGoods > 0
+                      ? [
+                          { key: 'cgst5', type: 'CGST', rate: '2.5%', on: tax.taxable, amount: tax.cgst },
+                          { key: 'sgst5', type: 'SGST', rate: '2.5%', on: tax.taxable, amount: tax.sgst },
+                        ]
+                      : []),
                     ...(charges > 0
                       ? [
                           { key: 'cgst18', type: 'CGST', rate: '9%', on: chargesEx, amount: chargesTax.cgst },
@@ -1607,7 +1631,7 @@ export default function GiveProductScreen() {
                   <View style={styles.payablePill}>
                     <Ionicons name="pricetags-outline" size={13} color={GREEN} />
                     <ThemedText type="small" style={styles.payablePillText}>
-                      Inclusive of GST
+                      {gstAll > 0 ? 'Inclusive of GST' : 'No GST'}
                     </ThemedText>
                   </View>
                 </View>

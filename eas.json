@@ -14,7 +14,7 @@
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://contract-farming-backend-v2-new.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://contract-farming-backend-v2-lra6.onrender.com"
       },
       "android": {
         "buildType": "apk"

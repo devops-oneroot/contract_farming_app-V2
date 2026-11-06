@@ -23,7 +23,7 @@ export const SPEECH_PRESET = {
   bitRate: 64000,
 };
 
-/** Cloudinary keys the upload off the extension, so send the real one. */
+/** The stored file keeps the upload's extension, so send the real one. */
 export function fileMeta(uri: string, base = 'onboarding') {
   const ext = (uri.split('.').pop() || 'm4a').split('?')[0].toLowerCase();
   const mime: Record<string, string> = {

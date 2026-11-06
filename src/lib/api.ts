@@ -820,6 +820,8 @@ export type Product = {
   /** The pack sizes this product comes in. Empty = sold in one size only. */
   variants?: ProductVariant[];
   imageUrl: string;
+  /** Whether a field sale of it splits out 5% GST. Off unless the office turns it on. */
+  gstEnabled?: boolean;
   crops: string[];
   dayStart: number | null;
   dayEnd: number | null;
@@ -1874,7 +1876,7 @@ export const api = {
 
   getCrop: (id: string) => request<Crop>(`/api/crops/${id}`),
 
-  // Mark a POP step done, optionally uploading a photo (multipart -> Cloudinary on the server).
+  // Mark a POP step done, optionally uploading a photo (multipart -> S3 on the server).
   completeTask: async (
     cropId: string,
     stepIndex: number,

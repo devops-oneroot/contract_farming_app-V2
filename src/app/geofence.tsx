@@ -16,9 +16,10 @@ import { useTheme } from '@/hooks/use-theme';
 import { api, GeoPoint, User } from '@/lib/api';
 
 const GREEN = Brand.primary;
-// Tutorial video shown before drawing (raw Cloudinary MP4 so we can slow it down).
+// Tutorial video shown before drawing (a raw MP4, so it can be slowed down),
+// served out of the S3 bucket by the backend's /api/media route.
 // Leave '' to show the illustrated guide instead.
-const TUTORIAL_VIDEO_URL = 'https://res.cloudinary.com/dz23idc5e/video/upload/video_yzz2b7.mp4';
+const TUTORIAL_VIDEO_URL = `${(process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000').replace(/\/+$/, '')}/api/media/oneroot/static/geofence-tutorial.mp4`;
 const TUTORIAL_SPEED = 0.7; // play a bit slower so farmers can follow along
 const DEFAULT_CENTER: [number, number] = [15.3173, 75.7139]; // Karnataka, India
 

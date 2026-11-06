@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "CF-OneRoot",
-    "slug": "cf-oneroot",
+    "slug": "cf-oneroot-v2",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -106,15 +106,18 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "owner": "haider_oneroot",
+    "owner": "oneroot-v2",
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "9384415d-26e1-4dc5-bc14-0b73e22c68f1"
+        "projectId": "1af240b3-a7b6-4e60-8f26-bff2d3f7c6e7"
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/9384415d-26e1-4dc5-bc14-0b73e22c68f1"
+      "url": "https://u.expo.dev/1af240b3-a7b6-4e60-8f26-bff2d3f7c6e7",
+      "requestHeaders": {
+        "expo-channel-name": "preview"
+      }
     },
     "runtimeVersion": {
       "policy": "appVersion"

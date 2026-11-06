@@ -1,0 +1,60 @@
+# Publish an over-the-air update to the test APKs on every push to main.
+#
+# The APK is built locally (android/app/build/outputs/apk/release) and listens
+# on the "preview" channel (app.json -> updates.requestHeaders). This sends the
+# new JavaScript to it; phones pick it up on their next launch-and-reopen.
+#
+# Needs one repository secret: EXPO_TOKEN (expo.dev -> Account settings ->
+# Access tokens). Native changes - icon, splash, permissions, new native
+# libraries, app version - still need a new APK, not this.
+name: EAS Update (preview)
+
+on:
+  push:
+    branches: [main]
+  # Run it by hand from the Actions tab too.
+  workflow_dispatch:
+
+concurrency:
+  group: eas-update-preview
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      # .env is gitignored, so it is not here. Without this the update would be
+      # bundled against the localhost fallback and every phone would lose the
+      # backend. Override with a repository variable of the same name.
+      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL || 'https://contract-farming-backend-v2-lra6.onrender.com' }}
+    steps:
+      - name: Check for EXPO_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Add the EXPO_TOKEN repository secret (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish update to the preview channel
+        # The commit message goes in through the environment, never pasted into
+        # the command: quotes or $(...) in a message must not run as shell.
+        env:
+          MESSAGE: ${{ github.event.head_commit.message || 'Manual run' }}
+        run: eas update --channel preview --message "$MESSAGE" --non-interactive
