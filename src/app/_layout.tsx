@@ -10,6 +10,7 @@ import { LocationGate } from '@/components/location-gate';
 import { Brand, MaxContentWidth } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
+import { applyPendingUpdate } from '@/lib/ota';
 import { registerForPush } from '@/lib/push';
 // Imported for its side effect: the background location task must be defined
 // before the OS can deliver a fix to it, including on a cold start into the
@@ -48,6 +49,11 @@ function RootNavigation() {
       router.replace('/login');
     }
   }, [user, loading, onboarded, segments, router]);
+
+  // Restart into a newer OTA as soon as one is found, not on the next launch.
+  useEffect(() => {
+    applyPendingUpdate();
+  }, []);
 
   // Register this device for push notifications once signed in.
   useEffect(() => {

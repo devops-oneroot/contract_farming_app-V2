@@ -20,6 +20,7 @@ import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
+import { ProfilePhotoPopup } from '@/components/profile-photo-popup';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -80,6 +81,9 @@ export default function FarmerScreen() {
   // Farmer's own details, edited from this screen by their agronomist.
   const [farmerName, setFarmerName] = useState('');
   const [farmerMobile, setFarmerMobile] = useState('');
+  // Their profile photo, when one was taken; tapping it opens it larger.
+  const [farmerPhoto, setFarmerPhoto] = useState('');
+  const [photoOpen, setPhotoOpen] = useState(false);
   // Only the agronomist who registered this farmer may remove them, so the
   // action is hidden entirely for farmers who were merely assigned.
   const [onboardedByMe, setOnboardedByMe] = useState(false);
@@ -120,6 +124,7 @@ export default function FarmerScreen() {
         if (farmerUser) {
           setFarmerName(farmerUser.name ?? '');
           setFarmerMobile(farmerUser.mobile ?? '');
+          setFarmerPhoto(farmerUser.photoUrl ?? '');
           setOnboardedByMe(!!user && String(farmerUser.onboardedBy ?? '') === user._id);
         }
         // Fetch the schedule for each distinct crop to compute the current stage.
@@ -264,11 +269,20 @@ export default function FarmerScreen() {
                 {/* Farmer details — editable by their agronomist */}
                 <Pressable onPress={openEdit} style={({ pressed }) => pressed && { opacity: 0.85 }}>
                   <ThemedView type="card" style={styles.geoBtn}>
-                    <View style={[styles.geoIcon, { backgroundColor: '#FF7F00' }]}>
-                      <ThemedText style={styles.avatarText}>
-                        {(farmerName || name || '?').charAt(0).toUpperCase()}
-                      </ThemedText>
-                    </View>
+                    {farmerPhoto ? (
+                      <Pressable
+                        onPress={() => setPhotoOpen(true)}
+                        hitSlop={4}
+                        accessibilityLabel="View farmer's photo">
+                        <Image source={{ uri: farmerPhoto }} style={styles.profilePhoto} contentFit="cover" transition={150} />
+                      </Pressable>
+                    ) : (
+                      <View style={[styles.geoIcon, { backgroundColor: '#FF7F00' }]}>
+                        <ThemedText style={styles.avatarText}>
+                          {(farmerName || name || '?').charAt(0).toUpperCase()}
+                        </ThemedText>
+                      </View>
+                    )}
                     <View style={{ flex: 1 }}>
                       <ThemedText type="smallBold">{farmerName || name || 'Farmer'}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary">
@@ -856,6 +870,11 @@ export default function FarmerScreen() {
 
       {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
 
+      <ProfilePhotoPopup
+        person={photoOpen && farmerPhoto ? { name: farmerName || name, mobile: farmerMobile, photoUrl: farmerPhoto } : null}
+        onClose={() => setPhotoOpen(false)}
+      />
+
       {/* Setting the return date on a visit already logged. A sheet rather than
           a screen: the agent is reading the visit they are scheduling from, and
           a push would take it away from them. */}
@@ -1097,6 +1116,7 @@ const styles = StyleSheet.create({
   doneBtn: { alignItems: 'center', paddingVertical: Spacing.three },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.six, gap: Spacing.two },
   geoBtn: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Spacing.three },
+  profilePhoto: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#e5e7eb' },
   geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FF7F00', alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.four, borderRadius: Spacing.three, alignItems: 'center' },
   saleCard: { padding: Spacing.three, borderRadius: Spacing.three, marginBottom: Spacing.two },

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Linking } from 'react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,6 +25,7 @@ import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { FilterPicker } from '@/components/filter-picker';
+import { ProfilePhotoPopup } from '@/components/profile-photo-popup';
 import { Aggregator, api, DateRange, Farmer, onboarderId, onboarderName } from '@/lib/api';
 import { limitSearch } from '@/lib/mobile';
 import { callFarmer } from '@/lib/call';
@@ -153,6 +155,8 @@ export default function OnboardedScreen() {
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const [tab, setTab] = useState<TabKey>('farmers');
+  // The farmer whose photo is open in the popup, from tapping their avatar.
+  const [photoOf, setPhotoOf] = useState<Farmer | null>(null);
   const [farmers, setFarmers] = useState<Farmer[]>([]);
   const [aggregators, setAggregators] = useState<Aggregator[]>([]);
   const [loading, setLoading] = useState(true);
@@ -526,11 +530,27 @@ export default function OnboardedScreen() {
                 onPress={() => router.push({ pathname: '/farmer', params: { farmerId: f._id, name: f.name } })}
                 style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}>
                 <View style={[styles.cardBody, compact && { gap: Spacing.two }]}>
-                  <View style={[styles.avatar, compact && styles.avatarCompact]}>
-                    <ThemedText style={styles.avatarText}>
-                      {f.name?.charAt(0)?.toUpperCase() ?? '?'}
-                    </ThemedText>
-                  </View>
+                  {/* Their photo when one was taken, opening larger on a tap;
+                      otherwise their initial, and the tap opens the farmer. */}
+                  {f.photoUrl ? (
+                    <Pressable
+                      onPress={() => setPhotoOf(f)}
+                      hitSlop={4}
+                      accessibilityLabel={`View ${f.name}'s photo`}>
+                      <Image
+                        source={{ uri: f.photoUrl }}
+                        style={[styles.avatar, compact && styles.avatarCompact]}
+                        contentFit="cover"
+                        transition={150}
+                      />
+                    </Pressable>
+                  ) : (
+                    <View style={[styles.avatar, compact && styles.avatarCompact]}>
+                      <ThemedText style={styles.avatarText}>
+                        {f.name?.charAt(0)?.toUpperCase() ?? '?'}
+                      </ThemedText>
+                    </View>
+                  )}
                   <View style={{ flex: 1 }}>
                     <ThemedText type="smallBold" numberOfLines={1}>
                       {f.name}
@@ -669,6 +689,11 @@ export default function OnboardedScreen() {
         selected={onboardedBy}
         onSelect={setOnboardedBy}
         onClose={() => setWhoOpen(false)}
+      />
+
+      <ProfilePhotoPopup
+        person={photoOf?.photoUrl ? { name: photoOf.name, mobile: photoOf.mobile, photoUrl: photoOf.photoUrl } : null}
+        onClose={() => setPhotoOf(null)}
       />
 
       {/* Filter by when someone was registered. */}

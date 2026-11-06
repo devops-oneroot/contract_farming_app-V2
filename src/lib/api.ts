@@ -1,6 +1,12 @@
 // Trailing slashes trimmed: every path below starts with '/', and a URL pasted
 // as 'https://host/' made every request '//api/...', which the server answers 404.
-const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000').replace(/\/+$/, '');
+/**
+ * The live backend. Used whenever EXPO_PUBLIC_API_URL is not baked into the
+ * bundle - an OTA published without it once fell back to localhost and every
+ * phone lost the server. Set the variable only to point a dev build elsewhere.
+ */
+export const LIVE_API_URL = 'https://contract-farming-backend-v2-lra6.onrender.com';
+export const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || LIVE_API_URL).replace(/\/+$/, '');
 
 export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
 
