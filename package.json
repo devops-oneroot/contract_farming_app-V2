@@ -59,7 +59,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "ota:preview": "eas update --branch preview --environment preview",
+    "ota:preview": "eas update --branch preview --clear-cache",
     "ota:prod": "eas update --branch production --environment production"
   },
   "private": true
