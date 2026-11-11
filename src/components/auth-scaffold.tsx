@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useState, type ReactNode, type Ref } from 'react';
+import { useCallback, useRef, useState, type MutableRefObject, type ReactNode, type Ref } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -238,15 +238,35 @@ export function AuthField({
   const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(true);
   const borderColor = error ? AUTH.danger : focused ? AUTH.btn : AUTH.border;
+
+  // Our own handle on the input, so a tap anywhere on the box (the icon, the
+  // padding) focuses it - while still handing it to the caller's `inputRef`.
+  const innerRef = useRef<RNTextInput | null>(null);
+  const setRef = useCallback(
+    (node: RNTextInput | null) => {
+      innerRef.current = node;
+      if (typeof inputRef === 'function') inputRef(node);
+      else if (inputRef) (inputRef as MutableRefObject<RNTextInput | null>).current = node;
+    },
+    [inputRef]
+  );
+
   return (
     <View style={{ marginTop: 14 }}>
       <Text style={styles.label}>{label}</Text>
-      <View
-        style={[
-          styles.field,
-          { borderColor, backgroundColor: focused ? '#fff' : AUTH.input },
-          focused && styles.fieldFocused,
-        ]}>
+      {/*
+        Focus changes COLOURS only. Never toggle elevation / shadow / opacity /
+        zIndex here: on the New Architecture that changes whether this box is a
+        native view of its own, so Android detaches and re-attaches the
+        TextInput inside it - and a re-attached input has lost its focus. That
+        was the "fields cannot be focused" bug: focusing restyled the box, which
+        blurred the field straight away.
+      */}
+      <Pressable
+        onPress={() => innerRef.current?.focus()}
+        disabled={input.editable === false}
+        accessible={false}
+        style={[styles.field, { borderColor, backgroundColor: focused ? '#fff' : AUTH.input }]}>
         <Ionicons name={icon} size={19} color={focused ? AUTH.btn : AUTH.subtitle} />
         {prefix ? (
           <View style={styles.prefix}>
@@ -254,7 +274,7 @@ export function AuthField({
           </View>
         ) : null}
         <TextInput
-          ref={inputRef}
+          ref={setRef}
           placeholderTextColor="#9AA5B1"
           {...input}
           onFocus={(e) => {
@@ -283,7 +303,7 @@ export function AuthField({
             />
           </Pressable>
         ) : null}
-      </View>
+      </Pressable>
       {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
@@ -498,13 +518,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 14,
     minHeight: 54,
-  },
-  fieldFocused: {
-    shadowColor: Brand.primary,
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
   },
   prefix: { borderRightWidth: 1, borderRightColor: AUTH.border, paddingRight: 10 },
   prefixText: { fontSize: 16, fontWeight: '700', color: AUTH.heading },
