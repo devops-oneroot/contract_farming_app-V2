@@ -19,10 +19,10 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { TextInput } from '@/components/exo-text';
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ScreenHeader } from '@/components/screen-header';

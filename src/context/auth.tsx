@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePostHog } from 'posthog-react-native';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 
-import { User } from '@/lib/api';
+import { AuthResponse, setAuthToken, setUnauthorizedHandler, User } from '@/lib/api';
 import { detachTracking } from '@/lib/tracking';
 
 const STORAGE_KEY = 'oneroot.user';
+const TOKEN_KEY = 'oneroot.token';
 const ONBOARD_KEY = 'oneroot.onboarded';
 
 type AuthContextValue = {
@@ -13,7 +14,10 @@ type AuthContextValue = {
   loading: boolean;
   onboarded: boolean;
   completeOnboarding: () => Promise<void>;
-  signIn: (user: User) => Promise<void>;
+  /** Sign in with what /login or /onboard returned (the user plus their token). */
+  signIn: (res: AuthResponse) => Promise<void>;
+  /** Replace the stored user after an edit (profile, farm boundary). Keeps the session. */
+  updateUser: (user: User) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -35,10 +39,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const [raw, ob] = await Promise.all([
+        const [raw, token, ob] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY),
+          AsyncStorage.getItem(TOKEN_KEY),
           AsyncStorage.getItem(ONBOARD_KEY),
         ]);
+        // Before the user, so the first screen's requests already carry it.
+        // Someone signed in on an app version from before tokens has none; they
+        // stay signed in until the server starts requiring one.
+        setAuthToken(token);
         if (raw) setUser(JSON.parse(raw));
         setOnboarded(ob === '1');
       } catch {
@@ -54,9 +63,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem(ONBOARD_KEY, '1');
   };
 
-  const signIn = async (u: User) => {
+  const signIn = async ({ token, ...u }: AuthResponse) => {
+    setAuthToken(token);
     setUser(u);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(u));
+    // The token is stored apart from the user, so it never ends up in analytics
+    // or anywhere else the user object is passed around.
+    await Promise.all([
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(u)),
+      AsyncStorage.setItem(TOKEN_KEY, token),
+    ]);
+  };
+
+  const updateUser = async (u: User) => {
+    // Drop a `token` field if an edit endpoint ever echoes one back.
+    const { token: _drop, ...clean } = u as User & { token?: string };
+    setUser(clean);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
   };
 
   const signOut = async () => {
@@ -67,13 +89,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Capped: with no signal, sending the last buffered points could hang, and
     // the agent must still get to the login screen.
     await Promise.race([detachTracking().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
-    await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+    await AsyncStorage.multiRemove([STORAGE_KEY, TOKEN_KEY]).catch(() => {});
+    setAuthToken(null);
     // Last: this is what sends the app to the login screen.
     setUser(null);
   };
 
+  // A token the server rejects (expired, revoked) signs the user out. Through a
+  // ref so the handler always calls the current signOut.
+  const signOutRef = useRef(signOut);
+  signOutRef.current = signOut;
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      signOutRef.current();
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, onboarded, completeOnboarding, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, onboarded, completeOnboarding, signIn, updateUser, signOut }}>
       {children}
     </AuthContext.Provider>
   );

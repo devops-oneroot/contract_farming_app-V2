@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
-import { api, TrackingPause, TrackPoint } from './api';
+import { api, GeoPoint, TrackingPause, TrackPoint } from './api';
+import { currentFix } from './location-fix';
 
 export const TRACKING_TASK = 'oneroot-location-tracking';
 
@@ -16,6 +17,63 @@ const BUFFER_KEY = 'oneroot.tracking.buffer';
 // "stopped because location went off" without asking the server - the agent is
 // often offline exactly when this matters.
 const PAUSED_KEY = 'oneroot.tracking.paused';
+/**
+ * An END the server has not confirmed yet. END is the day's attendance, so it
+ * must never be lost to a dead zone: it is kept here - with the moment it was
+ * pressed and where - and re-sent until the server takes it.
+ */
+const PENDING_STOP_KEY = 'oneroot.tracking.pendingStop';
+
+type PendingStop = {
+  sessionId: string;
+  endedAt: string;
+  location: GeoPoint | null;
+  points: TrackPoint[];
+  photo?: { uri: string; name: string; type: string };
+};
+
+async function readPendingStop(): Promise<PendingStop | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_STOP_KEY);
+    return raw ? (JSON.parse(raw) as PendingStop) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Send a saved END, if there is one. Returns true when nothing is left
+ * pending. Safe to call any time and repeatedly; the server takes the END at
+ * the time it was pressed, not the time it arrives.
+ */
+export async function flushPendingStop(): Promise<boolean> {
+  const pending = await readPendingStop();
+  if (!pending) return true;
+  const send = (photo?: PendingStop['photo']) =>
+    api.stopTracking(pending.sessionId, pending.points, photo, {
+      location: pending.location,
+      endedAt: pending.endedAt,
+    });
+  try {
+    try {
+      await send(pending.photo);
+    } catch (e: any) {
+      // Still offline: keep it for next time. Anything else may be the photo
+      // file gone from the cache - send without it rather than never.
+      if (!pending.photo || /network|fetch/i.test(String(e?.message))) throw e;
+      await send(undefined);
+    }
+    await AsyncStorage.removeItem(PENDING_STOP_KEY);
+    return true;
+  } catch (e: any) {
+    // The server has no such session: nothing will ever accept this END.
+    if (/not found/i.test(String(e?.message))) {
+      await AsyncStorage.removeItem(PENDING_STOP_KEY).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+}
 
 // Sampling: often enough to trace a road, rarely enough to survive a workday on
 // one battery. `distanceInterval` does most of the work — a parked phone stops
@@ -149,7 +207,12 @@ export async function startTracking(
     );
   }
 
-  const session = await api.startTracking(userId, role, photo);
+  // An earlier END still waiting for signal goes first, so that day keeps its END.
+  await flushPendingStop();
+
+  // START is the day's attendance: where they are now is part of the record.
+  const location = await currentFix({ required: true });
+  const session = await api.startTracking(userId, role, photo, location);
   await AsyncStorage.setItem(SESSION_KEY, session._id);
   await AsyncStorage.removeItem(PAUSED_KEY);
   await writeBuffer([]);
@@ -194,26 +257,40 @@ export async function resumePausedTracking() {
   return res;
 }
 
-/** Stop tracking and flush whatever is still buffered into the closing session. */
+/**
+ * Stop tracking - this is also the day's attendance END.
+ *
+ * The END time is taken now, when the button is pressed. If the server can't
+ * be reached it is saved (with the location and the day's last points) and
+ * re-sent by flushPendingStop until it lands, so a dead zone at the end of the
+ * day can never turn it into an absence. Returns { session, pending }.
+ */
 export async function stopTracking(photo?: { uri: string; name: string; type: string }) {
+  const endedAt = new Date().toISOString();
   const sessionId = await getActiveSessionId();
 
   // Unconditionally, and before anything can fail: whatever else happens, the
   // phone must stop recording. Already stopped if the day was paused.
   await endLocationUpdates();
 
-  if (!sessionId) return null;
+  if (!sessionId) return { session: null, pending: false };
+  // Where they ended. Best effort and quick: a GPS that can't answer must not
+  // stand between the agent and ending their day.
+  const location = await currentFix({ required: false, timeoutMs: 10000 }).catch(() => null);
   const trailing = await readBuffer();
   let session = null;
+  let pending = false;
   try {
-    session = await api.stopTracking(sessionId, trailing, photo);
-    await writeBuffer([]);
+    session = await api.stopTracking(sessionId, trailing, photo, { location, endedAt });
   } catch {
-    // Leave the buffer alone: the session stays open server-side and the next
-    // start will close it, rather than silently discarding the day's tail.
+    const stop: PendingStop = { sessionId, endedAt, location, points: trailing, photo };
+    await AsyncStorage.setItem(PENDING_STOP_KEY, JSON.stringify(stop)).catch(() => {});
+    pending = true;
   }
+  // Either sent, or now inside the pending END - not left for a later session.
+  await writeBuffer([]);
   await AsyncStorage.multiRemove([SESSION_KEY, PAUSED_KEY]);
-  return session;
+  return { session, pending };
 }
 
 /**
@@ -221,7 +298,13 @@ export async function stopTracking(photo?: { uri: string; name: string; type: st
  * server still has an open session, adopt it and make sure the task is running.
  */
 export async function resumeTracking(userId: string) {
-  const session = await api.currentTracking(userId).catch(() => null);
+  // An END still waiting for signal goes first. Until it lands, the server
+  // still thinks that day is running - it must not be adopted and restarted.
+  const pendingClear = await flushPendingStop();
+  const pendingStop = pendingClear ? null : await readPendingStop();
+
+  const fetched = await api.currentTracking(userId).catch(() => null);
+  const session = fetched && fetched._id === pendingStop?.sessionId ? null : fetched;
   if (!session) {
     await AsyncStorage.multiRemove([SESSION_KEY, PAUSED_KEY]);
     const running = await Location.hasStartedLocationUpdatesAsync(TRACKING_TASK).catch(() => false);
@@ -270,6 +353,9 @@ export async function detachTracking() {
  * Works from local state only, so it re-arms tracking with no signal.
  */
 export async function ensureTrackingRunning(restart = false) {
+  // Location (and often signal) just came back: a good moment to land an END
+  // that is still waiting.
+  flushPendingStop().catch(() => {});
   const [[, sessionId], [, paused]] = await AsyncStorage.multiGet([SESSION_KEY, PAUSED_KEY]);
   if (!sessionId || paused) return;
 

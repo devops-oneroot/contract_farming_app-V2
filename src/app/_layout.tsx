@@ -1,4 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { PostHogProvider } from 'posthog-react-native';
@@ -7,6 +8,7 @@ import { LogBox, Platform, StyleSheet, View } from 'react-native';
 
 import { AppSplash } from '@/components/app-splash';
 import { LocationGate } from '@/components/location-gate';
+import { ExoFontFiles } from '@/constants/fonts';
 import { Brand, MaxContentWidth } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
@@ -83,6 +85,13 @@ function RootNavigation() {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  // Exo is bundled with the JS, so it ships over OTA without a native rebuild.
+  // The native splash stays up until it is ready (RootNavigation hides it), so
+  // no screen flashes in the system font first. A load failure falls back to
+  // the system font rather than holding the app on the splash.
+  const [fontsLoaded, fontError] = useFonts(ExoFontFiles);
+  if (!fontsLoaded && !fontError) return null;
+
   // Always provide a PostHog client so usePostHog() has one; with no key configured
   // the SDK is disabled (no network, no tracking). Autocaptures screens + taps when on.
   return (

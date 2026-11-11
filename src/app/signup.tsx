@@ -2,13 +2,38 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View, type TextInput as RNTextInput } from 'react-native';
+import { Text } from '@/components/exo-text';
 
-import { AUTH, AuthScaffold, authStyles } from '@/components/auth-scaffold';
+import {
+  AUTH,
+  AuthButton,
+  AuthCheckbox,
+  AuthChoice,
+  AuthError,
+  AuthField,
+  AuthHeading,
+  AuthScaffold,
+  AuthSwitch,
+  authStyles,
+} from '@/components/auth-scaffold';
+import { Brand } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
-import { api, Role } from '@/lib/api';
+import { api, defaultPasswordFor, Role } from '@/lib/api';
 
 type Coords = { latitude: number | null; longitude: number | null };
+type Field = 'name' | 'mobile' | 'password';
+
+/** Matches the server's minimum. */
+const MIN_PASSWORD = 6;
+
+const ROLES: { key: Role; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'farmer', label: 'Farmer', hint: 'Grow & sell with us', icon: 'leaf' },
+  { key: 'agronomist', label: 'Agronomist', hint: 'Visit & advise farms', icon: 'flask' },
+  // A senior does everything an agronomist does, and answers the crop disease
+  // reports field agents send in.
+  { key: 'senior_agronomist', label: 'Senior Agronomist', hint: 'Lead the agronomy team', icon: 'ribbon' },
+];
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -21,7 +46,25 @@ export default function SignUpScreen() {
   const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const phoneRef = useRef<TextInput>(null);
+  // Which field the error is about, so only that one turns red.
+  const [errorField, setErrorField] = useState<Field | null>(null);
+  const phoneRef = useRef<RNTextInput>(null);
+  const passwordRef = useRef<RNTextInput>(null);
+
+  // Ticked by default: the account gets Oneroot@<mobile>, shown in the field
+  // as it is built from the number. Untick to choose your own.
+  const [useDefaultPw, setUseDefaultPw] = useState(true);
+  const [customPw, setCustomPw] = useState('');
+  const password = useDefaultPw ? defaultPasswordFor(mobile) : customPw;
+
+  const fail = (msg: string, field: Field | null = null) => {
+    setError(msg);
+    setErrorField(field);
+  };
+  const clearError = () => {
+    setError(null);
+    setErrorField(null);
+  };
 
   const getLocation = async () => {
     setError(null);
@@ -29,13 +72,13 @@ export default function SignUpScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setError('Location permission denied. You can continue without it.');
+        fail('Location permission denied. You can continue without it.');
         return;
       }
       const pos = await Location.getCurrentPositionAsync({});
       setCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
     } catch {
-      setError('Could not fetch location.');
+      fail('Could not fetch location.');
     } finally {
       setLocating(false);
     }
@@ -43,15 +86,22 @@ export default function SignUpScreen() {
 
   const onSubmit = async () => {
     setError(null);
-    if (!name.trim()) return setError('Please enter your name.');
-    if (!/^\d{7,15}$/.test(mobile.trim())) return setError('Please enter a valid phone number.');
+    setErrorField(null);
+    if (!name.trim()) return fail('Please enter your name.', 'name');
+    if (!/^\d{7,15}$/.test(mobile.trim())) return fail('Please enter a valid phone number.', 'mobile');
+    if (password.length < MIN_PASSWORD) {
+      return fail(`Password must be at least ${MIN_PASSWORD} characters.`, 'password');
+    }
 
     setSubmitting(true);
     try {
-      const user = await api.onboard({ role, name: name.trim(), mobile: mobile.trim(), location: coords });
-      await signIn(user);
+      await signIn(
+        await api.onboard({ role, name: name.trim(), mobile: mobile.trim(), password, location: coords })
+      );
     } catch (e: any) {
-      setError(e?.message || 'Something went wrong. Is the backend running?');
+      const msg: string = e?.message || 'Something went wrong. Is the backend running?';
+      // "Already registered" is about the number.
+      fail(msg, /registered/i.test(msg) ? 'mobile' : /password/i.test(msg) ? 'password' : null);
     } finally {
       setSubmitting(false);
     }
@@ -59,92 +109,167 @@ export default function SignUpScreen() {
 
   const hasLocation = coords.latitude != null && coords.longitude != null;
 
-  const roleBtn = (r: Role, label: string) => {
-    const on = role === r;
-    return (
-      <Pressable
-        key={r}
-        onPress={() => setRole(r)}
-        style={[
-          authStyles.roleBtn,
-          { backgroundColor: on ? '#fff' : AUTH.input, borderColor: on ? AUTH.btn : 'transparent' },
-        ]}>
-        <Text style={[authStyles.roleText, { color: on ? AUTH.btn : '#374151' }]}>{label}</Text>
-      </Pressable>
-    );
-  };
-
   return (
-    <AuthScaffold title="Create account" subtitle="Join OneRoot to manage your farms.">
-      <Text style={authStyles.cardTitle}>Account</Text>
-      <Text style={authStyles.cardSub}>Role, name, and phone.</Text>
+    <AuthScaffold variant="signup" title="Create account" subtitle="Join OneRoot and grow with confidence.">
+      <AuthHeading title="Get started" subtitle="Tell us who you are. It takes a minute." />
 
-      <Text style={authStyles.label}>Role</Text>
-      <View style={authStyles.roleRow}>
-        {roleBtn('farmer', 'Farmer')}
-        {roleBtn('agronomist', 'Agronomist')}
+      <Text style={[authStyles.label, { marginTop: 14 }]}>I am a</Text>
+      {/* One role per line: full names fit, and it reads the same on any width. */}
+      <View style={styles.roles} accessibilityRole="radiogroup">
+        {ROLES.map((r) => (
+          <AuthChoice
+            key={r.key}
+            label={r.label}
+            hint={r.hint}
+            icon={r.icon}
+            selected={role === r.key}
+            onPress={() => setRole(r.key)}
+          />
+        ))}
       </View>
-      {/* A senior does everything an agronomist does, and answers the crop
-          disease reports field agents send in — so it sits on its own row. */}
-      <View style={authStyles.roleRow}>{roleBtn('senior_agronomist', 'Senior Agronomist')}</View>
 
-      <Text style={authStyles.label}>Name</Text>
-      <TextInput
+      <AuthField
+        label="Full name"
+        icon="person-outline"
         value={name}
-        onChangeText={setName}
+        onChangeText={(t) => {
+          setName(t);
+          if (errorField === 'name') clearError();
+        }}
         placeholder="Your full name"
-        placeholderTextColor={AUTH.subtitle}
         autoCapitalize="words"
+        textContentType="name"
+        autoComplete="name"
         returnKeyType="next"
         onSubmitEditing={() => phoneRef.current?.focus()}
-        style={authStyles.input}
+        error={errorField === 'name'}
       />
 
-      <Text style={authStyles.label}>Phone Number</Text>
-      <TextInput
-        ref={phoneRef}
+      <AuthField
+        inputRef={phoneRef}
+        label="Phone number"
+        icon="call-outline"
         value={mobile}
-        onChangeText={setMobile}
+        onChangeText={(t) => {
+          setMobile(t.replace(/[^\d]/g, ''));
+          if (errorField === 'mobile') clearError();
+        }}
         placeholder="Enter your phone number"
-        placeholderTextColor={AUTH.subtitle}
         keyboardType="phone-pad"
-        style={authStyles.input}
+        textContentType="telephoneNumber"
+        autoComplete="tel"
+        maxLength={15}
+        returnKeyType={useDefaultPw ? 'done' : 'next'}
+        onSubmitEditing={() => !useDefaultPw && passwordRef.current?.focus()}
+        error={errorField === 'mobile'}
       />
 
-      <Text style={authStyles.label}>Location (optional)</Text>
-      <Pressable onPress={getLocation} disabled={locating} style={authStyles.input}>
-        {locating ? (
-          <ActivityIndicator color={AUTH.btn} />
-        ) : (
-          <Text style={{ color: hasLocation ? '#1a1a1a' : AUTH.subtitle, fontSize: 16 }}>
-            {hasLocation
-              ? `📍 ${coords.latitude!.toFixed(4)}, ${coords.longitude!.toFixed(4)}`
-              : '📍 Use my current location'}
-          </Text>
-        )}
-      </Pressable>
+      <AuthCheckbox
+        checked={useDefaultPw}
+        onChange={(next) => {
+          setUseDefaultPw(next);
+          setCustomPw('');
+          if (errorField === 'password') clearError();
+          if (!next) setTimeout(() => passwordRef.current?.focus(), 50);
+        }}
+        label="Use default password"
+        sub="Oneroot@ followed by your phone number"
+      />
 
-      {error && <Text style={authStyles.error}>{error}</Text>}
+      {/* Keyed on the mode so switching resets the field: the default is shown
+          in plain text and locked; your own starts hidden, with the eye. */}
+      {useDefaultPw ? (
+        <AuthField
+          key="default-pw"
+          label="Password"
+          icon="lock-closed-outline"
+          value={mobile ? password : ''}
+          placeholder="Oneroot@ + your phone number"
+          editable={false}
+          selectTextOnFocus
+          error={errorField === 'password'}
+          hint="Note this down. You will use it to sign in."
+        />
+      ) : (
+        <AuthField
+          key="custom-pw"
+          inputRef={passwordRef}
+          secure
+          label="Password"
+          icon="lock-closed-outline"
+          value={customPw}
+          onChangeText={(t) => {
+            setCustomPw(t);
+            if (errorField === 'password') clearError();
+          }}
+          placeholder={`At least ${MIN_PASSWORD} characters`}
+          textContentType="newPassword"
+          autoComplete="password-new"
+          returnKeyType="done"
+          error={errorField === 'password'}
+        />
+      )}
 
+      <Text style={[authStyles.label, { marginTop: 14 }]}>
+        Location <Text style={{ color: AUTH.subtitle, fontWeight: '500' }}>(optional)</Text>
+      </Text>
       <Pressable
-        onPress={onSubmit}
-        disabled={submitting}
-        style={[authStyles.primaryBtn, { opacity: submitting ? 0.7 : 1 }]}>
-        {submitting ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <>
-            <Text style={authStyles.primaryText}>Continue</Text>
-            <Ionicons name="arrow-forward" size={18} color="#fff" />
-          </>
-        )}
+        onPress={getLocation}
+        disabled={locating}
+        style={({ pressed }) => [
+          styles.location,
+          hasLocation
+            ? { borderColor: Brand.secondary, backgroundColor: Brand.secondarySurface, borderStyle: 'solid' }
+            : null,
+          pressed && { opacity: 0.85 },
+        ]}>
+        <View
+          style={[styles.locIcon, { backgroundColor: hasLocation ? Brand.secondary : Brand.primarySurface }]}>
+          {locating ? (
+            <ActivityIndicator size="small" color={hasLocation ? '#fff' : AUTH.btn} />
+          ) : (
+            <Ionicons
+              name={hasLocation ? 'checkmark' : 'locate'}
+              size={18}
+              color={hasLocation ? '#fff' : AUTH.btn}
+            />
+          )}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.locTitle}>
+            {locating ? 'Finding you…' : hasLocation ? 'Location added' : 'Use my current location'}
+          </Text>
+          <Text style={styles.locSub} numberOfLines={1}>
+            {hasLocation
+              ? `${coords.latitude!.toFixed(4)}, ${coords.longitude!.toFixed(4)} · tap to refresh`
+              : 'Helps us connect you with nearby support'}
+          </Text>
+        </View>
       </Pressable>
 
-      <Pressable onPress={() => router.replace('/login')} style={authStyles.link}>
-        <Text style={{ color: AUTH.subtitle, fontSize: 15 }}>
-          Already have an account? <Text style={{ color: AUTH.btn, fontWeight: '700' }}>Sign in</Text>
-        </Text>
-      </Pressable>
+      <AuthError message={error} />
+
+      <AuthButton label="Create account" onPress={onSubmit} loading={submitting} />
+
+      <AuthSwitch prompt="Already have an account?" action="Sign in" onPress={() => router.replace('/login')} />
     </AuthScaffold>
   );
 }
+
+const styles = StyleSheet.create({
+  roles: { gap: 10 },
+  location: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: AUTH.btn,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  locIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  locTitle: { fontSize: 15, fontWeight: '700', color: AUTH.heading },
+  locSub: { fontSize: 12, color: AUTH.subtitle, marginTop: 1 },
+});

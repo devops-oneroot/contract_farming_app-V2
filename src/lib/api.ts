@@ -1,12 +1,49 @@
-// Trailing slashes trimmed: every path below starts with '/', and a URL pasted
-// as 'https://host/' made every request '//api/...', which the server answers 404.
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
 /**
  * The live backend. Used whenever EXPO_PUBLIC_API_URL is not baked into the
  * bundle - an OTA published without it once fell back to localhost and every
- * phone lost the server. Set the variable only to point a dev build elsewhere.
+ * phone lost the server.
  */
 export const LIVE_API_URL = 'https://contract-farming-backend-v2-lra6.onrender.com';
-export const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || LIVE_API_URL).replace(/\/+$/, '');
+
+/**
+ * In dev, "localhost" means the phone itself, not the computer running the
+ * backend. Swap it for the computer's LAN IP, which Expo already knows from the
+ * dev-server connection (`hostUri`, e.g. "192.168.1.5:8081"). The browser runs
+ * on the computer, so web keeps localhost as written.
+ */
+function reachableFromDevice(url: string) {
+  if (Platform.OS === 'web' || !/\/\/(localhost|127\.0\.0\.1)\b/.test(url)) return url;
+  const devHost = Constants.expoConfig?.hostUri?.split(':')[0];
+  return devHost ? url.replace(/\/\/(localhost|127\.0\.0\.1)\b/, `//${devHost}`) : url;
+}
+
+/**
+ * Which backend this bundle talks to:
+ *
+ * - `__DEV__` (running from `npx expo start`): EXPO_PUBLIC_DEV_API_URL, the
+ *   backend on your machine.
+ * - Everything else - release builds and every OTA update: the live backend.
+ *   `__DEV__` is false in any bundle `eas update` publishes, so an OTA can
+ *   never ship pointing at localhost, whatever .env says.
+ *
+ * The `process.env.EXPO_PUBLIC_*` reads must stay written out in full: Expo
+ * inlines them at bundle time only when accessed that way.
+ *
+ * Trailing slashes trimmed: every path below starts with '/', and a URL pasted
+ * as 'https://host/' made every request '//api/...', which the server answers 404.
+ */
+const DEV_API_URL = (process.env.EXPO_PUBLIC_DEV_API_URL || '').trim();
+const PROD_API_URL = (process.env.EXPO_PUBLIC_API_URL || '').trim() || LIVE_API_URL;
+
+export const BASE_URL = (
+  __DEV__ && DEV_API_URL ? reachableFromDevice(DEV_API_URL) : PROD_API_URL
+).replace(/\/+$/, '');
+
+export const IS_DEV_API = __DEV__ && !!DEV_API_URL;
+if (__DEV__) console.log(`[api] ${IS_DEV_API ? 'DEV' : 'LIVE'} backend: ${BASE_URL}`);
 
 export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
 
@@ -320,13 +357,39 @@ export type Aggregator = {
   createdAt: string;
 };
 
+/** One working day's attendance. Written by My Day START / END, never by its own buttons. */
 export type Attendance = {
   _id: string;
   user: string;
   role: StaffRole;
+  /** 'no_field': a declared day with no field work - counts as present. */
+  kind?: 'tracked' | 'no_field';
+  reason?: string;
   startAt: string;
   endAt: string | null;
+  /** Where they were at START / END. Nulls on older records, and on END until then. */
+  loginLocation?: { latitude: number | null; longitude: number | null };
+  logoutLocation?: { latitude: number | null; longitude: number | null };
 };
+
+/**
+ * A day on the attendance calendar, as the server judges it.
+ * 'today' has no verdict yet; `why` says what made a past day absent.
+ */
+export type AttendanceDay = {
+  status: 'present' | 'absent' | 'today';
+  why: '' | 'no_record' | 'no_end' | 'short';
+  kind?: 'tracked' | 'no_field';
+  reason?: string;
+  startAt?: string;
+  endAt?: string | null;
+  workedMinutes?: number | null;
+  loginLocation?: { latitude: number | null; longitude: number | null };
+  logoutLocation?: { latitude: number | null; longitude: number | null };
+};
+
+/** Minimum logged-in hours per day; logout stays locked until they pass. Mirrors the server. */
+export const MIN_ATTENDANCE_HOURS = 9;
 
 export type Meeting = {
   _id: string;
@@ -856,13 +919,48 @@ export type Order = {
   createdAt: string;
 };
 
+// ----- Sign-in token (JWT) -----
+// Held here so every call can send it; the auth context sets it on sign in,
+// restores it on launch, and clears it on sign out.
+let authToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+/** Called when the server rejects the token (expired / revoked) - signs the user out. */
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler;
+}
+
+/** The Authorization header, for calls made with `fetch` directly (multipart uploads). */
+export function authHeaders(): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
+/** Default password every account starts with. Mirrors the server. */
+export const defaultPasswordFor = (mobile: string) => `Oneroot@${mobile.trim()}`;
+
+/** What sign in and sign up return: the user, plus their session token. */
+export type AuthResponse = User & { token: string };
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    // Merged, not replaced: a caller passing its own headers keeps the token.
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...((options?.headers as Record<string, string>) || {}),
+    },
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // A rejected session ends it, so the user lands on Sign in rather than on
+    // a screen where every action fails. Not for the sign-in call itself,
+    // where a 401 just means a wrong password.
+    if (res.status === 401 && authToken && !path.startsWith('/api/users/login')) onUnauthorized?.();
     throw new Error((data as any)?.message || `Request failed (${res.status})`);
   }
   return data as T;
@@ -873,11 +971,15 @@ export const api = {
     role: Role;
     name: string;
     mobile: string;
+    password: string;
     location: { latitude: number | null; longitude: number | null };
-  }) => request<User>('/api/users/onboard', { method: 'POST', body: JSON.stringify(body) }),
+  }) => request<AuthResponse>('/api/users/onboard', { method: 'POST', body: JSON.stringify(body) }),
 
-  login: (mobile: string) =>
-    request<User>('/api/users/login', { method: 'POST', body: JSON.stringify({ mobile }) }),
+  login: (mobile: string, password: string) =>
+    request<AuthResponse>('/api/users/login', {
+      method: 'POST',
+      body: JSON.stringify({ mobile, password }),
+    }),
 
   listFarmers: () => request<Farmer[]>('/api/users/farmers'),
 
@@ -1104,10 +1206,14 @@ export const api = {
   ) => request<Aggregator>('/api/aggregators', { method: 'POST', body: JSON.stringify({ ...body, agronomistId }) }),
 
   currentAttendance: (userId: string) => request<Attendance | null>(`/api/attendance/current?user=${userId}`),
-  startAttendance: (userId: string, role: StaffRole) =>
-    request<Attendance>('/api/attendance/start', { method: 'POST', body: JSON.stringify({ userId, role }) }),
-  endAttendance: (userId: string) =>
-    request<Attendance | { ok: boolean }>('/api/attendance/end', { method: 'POST', body: JSON.stringify({ userId }) }),
+  /**
+   * Each day's attendance status between `from` and `to` (keyed YYYY-MM-DD).
+   * Future days, and days before the user joined, are absent from `days`.
+   */
+  listAttendance: (userId: string, from: Date, to: Date) =>
+    request<{ minHours: number; today: string; days: Record<string, AttendanceDay> }>(
+      `/api/attendance${qs({ user: userId, from: from.toISOString(), to: to.toISOString() })}`
+    ),
 
   listCallLogs: (agronomistId: string) => request<CallLog[]>(`/api/call-logs?agronomist=${agronomistId}`),
   logCall: (body: { agronomistId: string; farmerId?: string | null; farmerName?: string; farmerMobile: string }) =>
@@ -1170,7 +1276,7 @@ export const api = {
       form.append('voiceNote', file as any);
       form.append('voiceNoteSeconds', String(seconds));
     }
-    const res = await fetch(`${BASE_URL}/api/disease-reports`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/disease-reports`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not send the report');
     return data as DiseaseReport;
@@ -1214,16 +1320,22 @@ export const api = {
 
   // ----- Day tracking -----
   // Start carries a photo of where the day began, so it is multipart.
+  /** START - also the day's attendance start, at `location`. */
   startTracking: async (
     userId: string,
     role?: string,
-    photo?: { uri: string; name: string; type: string }
+    photo?: { uri: string; name: string; type: string },
+    location?: GeoPoint | null
   ): Promise<TrackingSession> => {
     const form = new FormData();
     form.append('userId', userId);
     if (role) form.append('role', role);
+    if (location) {
+      form.append('latitude', String(location.latitude));
+      form.append('longitude', String(location.longitude));
+    }
     if (photo) form.append('photo', photo as any);
-    const res = await fetch(`${BASE_URL}/api/tracking/start`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/tracking/start`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not start tracking');
     return data as TrackingSession;
@@ -1234,14 +1346,19 @@ export const api = {
     userId: string,
     reason: string,
     role?: string,
-    photo?: { uri: string; name: string; type: string }
+    photo?: { uri: string; name: string; type: string },
+    location?: GeoPoint | null
   ): Promise<TrackingSession> => {
     const form = new FormData();
     form.append('userId', userId);
     form.append('reason', reason);
     if (role) form.append('role', role);
+    if (location) {
+      form.append('latitude', String(location.latitude));
+      form.append('longitude', String(location.longitude));
+    }
     if (photo) form.append('photo', photo as any);
-    const res = await fetch(`${BASE_URL}/api/tracking/no-field`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/tracking/no-field`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save');
     return data as TrackingSession;
@@ -1259,14 +1376,22 @@ export const api = {
   stopTracking: async (
     sessionId: string,
     points?: TrackPoint[],
-    photo?: { uri: string; name: string; type: string }
+    photo?: { uri: string; name: string; type: string },
+    /** END - also the day's attendance end: where, and when it was pressed (sent late if offline). */
+    end?: { location?: GeoPoint | null; endedAt?: string }
   ): Promise<TrackingSession> => {
     const form = new FormData();
     form.append('points', JSON.stringify(points ?? []));
     if (photo) form.append('photo', photo as any);
+    if (end?.location) {
+      form.append('latitude', String(end.location.latitude));
+      form.append('longitude', String(end.location.longitude));
+    }
+    if (end?.endedAt) form.append('endedAt', end.endedAt);
     const res = await fetch(`${BASE_URL}/api/tracking/${sessionId}/stop`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not stop tracking');
@@ -1291,6 +1416,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/tracking/${sessionId}/pause`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not pause');
@@ -1374,6 +1500,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/users/${farmerId}/photo`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not upload the photo');
@@ -1391,6 +1518,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/users/${farmerId}/onboarding-audio`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not upload the recording');
@@ -1568,7 +1696,7 @@ export const api = {
     if (body.longitude != null) form.append('longitude', String(body.longitude));
     if (body.notes) form.append('notes', body.notes);
     if (body.soldAt) form.append('soldAt', body.soldAt);
-    const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save the sale');
     return data as ProductSale;
@@ -1585,6 +1713,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/product-sales/${saleId}/after-photos`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save the photo');
@@ -1620,7 +1749,7 @@ export const api = {
     if (body.followUpNote) form.append('followUpNote', body.followUpNote);
     if (body.farmPhoto) form.append('farmPhoto', body.farmPhoto as any);
     if (body.farmerPhoto) form.append('farmerPhoto', body.farmerPhoto as any);
-    const res = await fetch(`${BASE_URL}/api/visits`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/visits`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save visit');
     return data as Visit;
@@ -1794,7 +1923,7 @@ export const api = {
     }
     if (body.photo) form.append('photo', body.photo as any);
 
-    const res = await fetch(`${BASE_URL}/api/fpos/${id}`, { method: 'PATCH', body: form });
+    const res = await fetch(`${BASE_URL}/api/fpos/${id}`, { method: 'PATCH', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save this FPO');
     return data as Fpo;
@@ -1856,7 +1985,7 @@ export const api = {
     if (body.locationSource) form.append('locationSource', body.locationSource);
     if (body.photo) form.append('photo', body.photo as any);
 
-    const res = await fetch(`${BASE_URL}/api/fpos`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/fpos`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save this FPO');
     return data as Fpo;
@@ -1896,6 +2025,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/crops/${cropId}/tasks/${stepIndex}`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
       // NOTE: do NOT set Content-Type; fetch adds the multipart boundary automatically.
     });
     const data = await res.json().catch(() => ({}));
@@ -1926,7 +2056,7 @@ export const api = {
     if (body.note) form.append('note', body.note);
     if (body.agronomistId) form.append('agronomistId', body.agronomistId);
     if (image) form.append('image', { uri: image.uri, name: image.name, type: image.type } as any);
-    const res = await fetch(`${BASE_URL}/api/crops/${cropId}/verify`, { method: 'POST', body: form });
+    const res = await fetch(`${BASE_URL}/api/crops/${cropId}/verify`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Verification failed');
     return data as Crop;
@@ -1943,6 +2073,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/crops/${cropId}/products/${productId}`, {
       method: 'POST',
       body: form,
+      headers: authHeaders(),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Upload failed');

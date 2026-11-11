@@ -12,9 +12,9 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
+import { TextInput } from '@/components/exo-text';
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ScreenHeader } from '@/components/screen-header';
@@ -26,7 +26,9 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, DayStats, TrackingSession } from '@/lib/api';
+import { api, Attendance, DayStats, MIN_ATTENDANCE_HOURS, TrackingSession } from '@/lib/api';
+import { confirmAction } from '@/lib/confirm';
+import { currentFix } from '@/lib/location-fix';
 import {
   flushBuffer,
   isPaused,
@@ -46,6 +48,9 @@ const AMBER = '#B45309';
 // How often the screen asks the server for the updated total while tracking.
 // The route itself is sent by the background task; this is only the display.
 const REFRESH_MS = 30_000;
+
+/** START -> END shorter than this marks the day absent. */
+const MIN_MS = MIN_ATTENDANCE_HOURS * 60 * 60 * 1000;
 
 function hhmm(from: string, to?: string | null) {
   const ms = (to ? new Date(to).getTime() : Date.now()) - new Date(from).getTime();
@@ -94,6 +99,9 @@ export default function TrackingScreen() {
   const [history, setHistory] = useState<TrackingSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // Today's attendance row: START / END on this screen are the attendance, and
+  // the day began at its first START (which may predate the current session).
+  const [todayAtt, setTodayAtt] = useState<Attendance | null>(null);
 
   // Start and end each want a photo, and a day in wants a photo plus a reason.
   const [capturing, setCapturing] = useState<Capturing | null>(null);
@@ -112,14 +120,16 @@ export default function TrackingScreen() {
     try {
       // Adopt whatever the server thinks is running: the app may have been
       // killed with tracking still on, and a second session would split the day.
-      const [live, dayStats, past] = await Promise.all([
+      const [live, dayStats, past, att] = await Promise.all([
         resumeTracking(user._id).catch(() => null),
         api.getDayStats(user._id).catch(() => null),
         api.listTracking(user._id).catch(() => []),
+        api.currentAttendance(user._id).catch(() => null),
       ]);
       setSession(live);
       setStats(dayStats);
       setHistory(past);
+      setTodayAtt(att);
     } finally {
       setLoading(false);
     }
@@ -164,9 +174,15 @@ export default function TrackingScreen() {
     setBusy(true);
     try {
       const uri = await shrink(photoUri);
-      const done = await stopTracking({ uri, name: 'end.jpg', type: 'image/jpeg' });
+      const { session: done, pending } = await stopTracking({ uri, name: 'end.jpg', type: 'image/jpeg' });
       setSession(null);
-      posthog?.capture('tracking_stopped', { distanceKm: done?.distanceKm ?? 0 });
+      posthog?.capture('tracking_stopped', { distanceKm: done?.distanceKm ?? 0, pending });
+      if (pending) {
+        Alert.alert(
+          'END saved on your phone',
+          `No connection right now. Your END time (${fmtTime(new Date().toISOString())}) is kept and will be sent automatically when you are back online. Open the app once you have signal.`
+        );
+      }
       await load();
     } catch (e: any) {
       Alert.alert('Could not stop tracking', e?.message || 'Please try again.');
@@ -258,7 +274,9 @@ export default function TrackingScreen() {
       const photo = noFieldPhoto
         ? { uri: await shrink(noFieldPhoto), name: 'no-field.jpg', type: 'image/jpeg' }
         : undefined;
-      await api.noFieldDay(user._id, reason.trim(), user.role, photo);
+      // Best effort: a no-field day is often declared from home, without a fix.
+      const location = await currentFix({ required: false, timeoutMs: 8000 }).catch(() => null);
+      await api.noFieldDay(user._id, reason.trim(), user.role, photo, location);
       posthog?.capture('no_field_day', { reason: reason.trim() });
       setNoFieldOpen(false);
       setNoFieldPhoto(null);
@@ -273,9 +291,19 @@ export default function TrackingScreen() {
   };
 
   const tracking = !!session && !session.endAt;
+  // START is once a day: today's attendance row exists from the first START
+  // (or a no-field day), so once it is there and nothing is running, today is done.
+  const usedToday =
+    !tracking && !!todayAtt && new Date(todayAtt.startAt).toDateString() === new Date().toDateString();
   const paused = tracking && isPaused(session);
   // The pause still running, so the screen can show when it began and why.
   const openPause = session?.pauses?.find((x) => !x.resumedAt);
+  // When today's attendance began: the day's first START, which a second START
+  // after an END does not move. The running session if that isn't loaded.
+  const dayStartedAt =
+    todayAtt && todayAtt.kind !== 'no_field' && new Date(todayAtt.startAt) <= new Date(session?.startAt ?? Date.now())
+      ? todayAtt.startAt
+      : session?.startAt ?? null;
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
@@ -318,18 +346,56 @@ export default function TrackingScreen() {
                 </>
               ) : (
                 <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-                  Start when you set off. Your route keeps recording with the phone locked.
+                  {usedToday
+                    ? 'You have already tracked today. START can be pressed only once a day - come back tomorrow.'
+                    : 'Start when you set off. Your route keeps recording with the phone locked.'}
                 </ThemedText>
               )}
 
+              {/* START / END here are the attendance - there is no other button for it. */}
+              <View style={styles.attNotice}>
+                <Ionicons name="finger-print" size={18} color={Brand.primary} />
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="small" style={{ fontWeight: '800', color: Brand.primaryDark }}>
+                    This will be marked as your attendance
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 12, lineHeight: 17 }}>
+                    START and END time and location are saved as your attendance. You can START only
+                    once a day, so do not END until your day is over. Work at least{' '}
+                    {MIN_ATTENDANCE_HOURS} hours between START and END to be marked Present; less, or no
+                    END, is marked Absent.
+                  </ThemedText>
+                </View>
+              </View>
+
               <Pressable
-                // END goes straight to the camera. There is no "are you sure":
-                // the day is over, and the next one is a fresh START.
-                onPress={() => setCapturing(tracking ? 'end' : 'start')}
-                disabled={busy}
+                // END goes straight to the camera - unless it would leave today
+                // short of the 9 hours, which marks the day absent. Then they are
+                // told so first, and can go back.
+                onPress={() => {
+                  if (!tracking) return setCapturing('start');
+                  const left = MIN_MS - (Date.now() - new Date(dayStartedAt ?? Date.now()).getTime());
+                  if (left <= 0) return setCapturing('end');
+                  const mins = Math.ceil(left / 60000);
+                  confirmAction({
+                    title: `Less than ${MIN_ATTENDANCE_HOURS} hours`,
+                    message:
+                      `You have worked ${dayStartedAt ? hhmm(dayStartedAt) : '0h 0m'} today. ` +
+                      `If you END now, today will be marked ABSENT.\n\n` +
+                      `${Math.floor(mins / 60)}h ${mins % 60}m more to reach ${MIN_ATTENDANCE_HOURS} hours.\n\n` +
+                      `You cannot START again today.`,
+                    confirmText: 'End anyway',
+                    destructive: true,
+                    onConfirm: () => setCapturing('end'),
+                  });
+                }}
+                disabled={busy || usedToday}
                 style={[
                   styles.bigBtn,
-                  { backgroundColor: tracking ? Brand.danger : GREEN, opacity: busy ? 0.6 : 1 },
+                  {
+                    backgroundColor: tracking ? Brand.danger : usedToday ? theme.textSecondary : GREEN,
+                    opacity: busy || usedToday ? 0.6 : 1,
+                  },
                 ]}>
                 {busy ? (
                   <ActivityIndicator color="#fff" />
@@ -337,7 +403,7 @@ export default function TrackingScreen() {
                   <>
                     <Ionicons name={tracking ? 'stop-circle' : 'play-circle'} size={22} color="#fff" />
                     <ThemedText type="smallBold" style={{ color: '#fff', fontSize: 16 }}>
-                      {tracking ? 'END' : 'START'}
+                      {tracking ? 'END' : usedToday ? 'DONE FOR TODAY' : 'START'}
                     </ThemedText>
                   </>
                 )}
@@ -500,7 +566,7 @@ export default function TrackingScreen() {
               <TextInput
                 value={pauseReason}
                 onChangeText={setPauseReason}
-                placeholder="e.g. Lunch break, going home for an hour"
+                placeholder="e.g. Heavy rain, waiting for it to stop"
                 placeholderTextColor={theme.textSecondary}
                 multiline
                 style={[
@@ -626,6 +692,15 @@ export default function TrackingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  attNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.two,
+    alignSelf: 'stretch',
+    backgroundColor: Brand.primarySurface,
+    borderRadius: Spacing.three,
+    padding: Spacing.three,
+  },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
   hero: {
     alignItems: 'center',

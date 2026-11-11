@@ -13,9 +13,9 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
+import { TextInput } from '@/components/exo-text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SafeAreaView, TOP_GAP } from '@/components/safe-area-view';
@@ -76,7 +76,7 @@ export default function ProfileScreen() {
   const scheme = useColorScheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, signIn, signOut } = useAuth();
+  const { user, updateUser, signOut } = useAuth();
 
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
   const isFarmer = !isAgronomist(user?.role);
@@ -105,7 +105,7 @@ export default function ProfileScreen() {
         name: editName.trim(),
         ...(mobile !== user.mobile ? { mobile } : {}),
       });
-      await signIn(updated);
+      await updateUser(updated);
       setEditOpen(false);
     } catch (e: any) {
       Alert.alert('Could not save', e?.message || 'Please try again.');

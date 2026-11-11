@@ -7,6 +7,7 @@ import { SafeAreaView } from '@/components/safe-area-view';
 
 import { BannerCarousel, type BannerSlide } from '@/components/banner-carousel';
 import { CallFab } from '@/components/call-fab';
+import { DailyNoticeToast } from '@/components/daily-notice-toast';
 import { Photos } from '@/constants/photos';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constants/theme';
@@ -14,7 +15,8 @@ import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useContentWidth } from '@/hooks/use-content-width';
 import { useTheme } from '@/hooks/use-theme';
-import { api, DayStats, isSenior, StaffRole, TrackingSession } from '@/lib/api';
+import { api, Attendance, DayStats, isSenior, StaffRole, TrackingSession } from '@/lib/api';
+import { flushPendingStop } from '@/lib/tracking';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -60,6 +62,8 @@ export function AgronomistHome() {
   const [openCount, setOpenCount] = useState(0);
   const [stats, setStats] = useState<DayStats | null>(null);
   const [session, setSession] = useState<TrackingSession | null>(null);
+  // Today's attendance row - present once START (or a no-field day) has been used.
+  const [todayAtt, setTodayAtt] = useState<Attendance | null>(null);
   const [fpoCount, setFpoCount] = useState(0);
 
   useFocusEffect(
@@ -71,7 +75,11 @@ export function AgronomistHome() {
         .then((rs) => setOpenCount(rs.length))
         .catch(() => setOpenCount(0));
       api.getDayStats(user._id).then(setStats).catch(() => setStats(null));
+      // An END (the day's attendance) that couldn't reach the server is retried
+      // every time the home screen is opened, until it lands.
+      flushPendingStop().catch(() => {});
       api.currentTracking(user._id).then(setSession).catch(() => setSession(null));
+      api.currentAttendance(user._id).then(setTodayAtt).catch(() => setTodayAtt(null));
       api
         .listFpos({ agronomistId: user._id })
         .then((fs) => setFpoCount(fs.length))
@@ -91,6 +99,10 @@ export function AgronomistHome() {
   };
 
   const tracking = !!session && !session.endAt;
+  // START is once a day (the server refuses a second one), so after today's
+  // END the dashboard stops offering it.
+  const usedToday =
+    !tracking && !!todayAtt && new Date(todayAtt.startAt).toDateString() === new Date().toDateString();
 
   const actions: {
     key: string;
@@ -144,7 +156,7 @@ export function AgronomistHome() {
     {
       key: 'day',
       label: 'My Day',
-      sub: tracking ? 'Recording' : 'Start tracking',
+      sub: tracking ? 'Recording' : usedToday ? 'Done for today' : 'Start tracking',
       icon: 'navigate',
       tint: Brand.secondary,
       well: Brand.secondarySurface,
@@ -158,6 +170,15 @@ export function AgronomistHome() {
       tint: Brand.accent,
       well: Brand.accentSurface,
       route: '/calendar',
+    },
+    {
+      key: 'attendance',
+      label: 'Attendance',
+      sub: 'Present / absent',
+      icon: 'finger-print',
+      tint: Brand.secondary,
+      well: Brand.secondarySurface,
+      route: '/attendance',
     },
     /**
      * Seniors only. Spread away rather than rendered and hidden, so the tile
@@ -278,19 +299,38 @@ export function AgronomistHome() {
               onPress={() => router.push('/tracking' as never)}
               style={({ pressed }) => [styles.statusCard, pressed && { opacity: 0.9 }]}>
               <View style={[styles.statusIcon, tracking && styles.statusIconOn]}>
-                <Ionicons name={tracking ? 'radio' : 'navigate-outline'} size={20} color={tracking ? GREEN : '#fff'} />
+                <Ionicons
+                  name={tracking ? 'radio' : usedToday ? 'checkmark-done' : 'navigate-outline'}
+                  size={20}
+                  color={tracking ? GREEN : '#fff'}
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <ThemedText type="smallBold" style={{ fontSize: 15, color: '#fff' }}>
-                  {tracking ? `Tracking · ${stats?.distanceKm ?? 0} km today` : 'Not tracking'}
+                  {tracking
+                    ? `Tracking · ${stats?.distanceKm ?? 0} km today`
+                    : usedToday
+                      ? `Day done · ${stats?.distanceKm ?? 0} km today`
+                      : 'Not tracking'}
                 </ThemedText>
                 <ThemedText type="small" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                  {tracking ? 'Tap to see your day' : 'Tap START when you set off'}
+                  {tracking
+                    ? 'Tap to see your day'
+                    : usedToday
+                      ? 'START is once a day – tap to see your day'
+                      : 'Tap START when you set off – this marks your attendance'}
                 </ThemedText>
               </View>
-              <View style={[styles.statusPill, tracking && { backgroundColor: Brand.danger }]}>
-                <ThemedText type="small" style={{ color: tracking ? '#fff' : GREEN, fontWeight: '800' }}>
-                  {tracking ? 'END' : 'START'}
+              <View
+                style={[
+                  styles.statusPill,
+                  tracking && { backgroundColor: Brand.danger },
+                  usedToday && { backgroundColor: 'rgba(255,255,255,0.35)' },
+                ]}>
+                <ThemedText
+                  type="small"
+                  style={{ color: tracking || usedToday ? '#fff' : GREEN, fontWeight: '800' }}>
+                  {tracking ? 'END' : usedToday ? 'DONE' : 'START'}
                 </ThemedText>
               </View>
             </Pressable>
@@ -446,6 +486,8 @@ export function AgronomistHome() {
       </ScrollView>
 
       <CallFab />
+      {/* Once a day: attendance and the visit target. Over everything else. */}
+      <DailyNoticeToast userId={user?._id} />
     </View>
   );
 }

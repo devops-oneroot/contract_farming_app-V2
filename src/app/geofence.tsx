@@ -92,7 +92,7 @@ export default function GeofenceScreen() {
   const theme = useTheme();
   const router = useRouter();
   const posthog = usePostHog();
-  const { user, signIn } = useAuth();
+  const { user, updateUser } = useAuth();
   // When opened from onboarding, `userId` targets a specific farmer; otherwise self.
   const { userId, name } = useLocalSearchParams<{ userId?: string; name?: string }>();
   const targetId = userId || user?._id || '';
@@ -212,7 +212,7 @@ export default function GeofenceScreen() {
     try {
       const updated = await api.updateProfile(targetId, { geofence: pts });
       posthog?.capture('geofence_saved', { corners: pts.length, forSelf: isSelf });
-      if (isSelf) await signIn(updated); // keep own auth user in sync
+      if (isSelf) await updateUser(updated); // keep own auth user in sync
       Alert.alert('Saved ✓', 'The farm boundary has been saved.', [
         { text: 'OK', onPress: () => router.back() },
       ]);

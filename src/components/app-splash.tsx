@@ -1,7 +1,8 @@
 import { Image } from 'expo-image';
 import * as Updates from 'expo-updates';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/exo-text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Photos } from '@/constants/photos';
