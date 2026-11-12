@@ -249,6 +249,10 @@ export default function GeofenceScreen() {
   v.addEventListener('play', slow);
   slow();
 </script></body></html>`,
+                    // Gives this inline page the backend's origin. Without it the video
+                    // request is cross-site with no Origin/Referer, and /api/media refuses
+                    // those (it serves browsers only from the dashboard).
+                    baseUrl: BASE_URL,
                   }}
                   style={{ flex: 1, backgroundColor: '#000' }}
                   allowsInlineMediaPlayback
