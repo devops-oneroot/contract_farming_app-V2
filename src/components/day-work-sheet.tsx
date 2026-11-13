@@ -16,9 +16,25 @@ import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, DayReport, DayReportRow } from '@/lib/api';
+import { api, DayReport, DayReportRow, DayWritten } from '@/lib/api';
 
 const GREEN = Brand.primary;
+
+/** What the agent wrote, as label/value rows, leaving out anything left blank. */
+function writtenRows(r: DayWritten): [string, string][] {
+  const rows: [string, string][] = [
+    ['What I did today', r.dailyReport],
+    ['Food expense', r.foodExpense ? `₹${r.foodExpense.toLocaleString('en-IN')}` : ''],
+    ["Today's expenses", r.dailyExpenses],
+    [
+      'Kilometres travelled',
+      r.meterEnd ? `${r.totalKm} km (meter ${r.meterStart} → ${r.meterEnd})` : '',
+    ],
+    ["Tomorrow's expenses", r.expectedExpensesTomorrow],
+    ['Plan for tomorrow', r.planOfActionTomorrow],
+  ];
+  return rows.filter(([, v]) => v && v.trim());
+}
 
 const money = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
@@ -199,12 +215,7 @@ export function DayWorkSheet({
                 )}
 
                 {report.report &&
-                  [
-                    ['What I did today', report.report.dailyReport],
-                    ["Today's expenses", report.report.dailyExpenses],
-                    ["Tomorrow's expenses", report.report.expectedExpensesTomorrow],
-                    ['Plan for tomorrow', report.report.planOfActionTomorrow],
-                  ].filter(([, v]) => v && v.trim()).length > 0 && (
+                  writtenRows(report.report).length > 0 && (
                     <View style={{ marginTop: Spacing.four }}>
                       <View style={styles.sectionHead}>
                         <View style={[styles.sectionIcon, { backgroundColor: `${GREEN}1A` }]}>
@@ -214,16 +225,7 @@ export function DayWorkSheet({
                           Daily report
                         </ThemedText>
                       </View>
-                      {(
-                        [
-                          ['What I did today', report.report.dailyReport],
-                          ["Today's expenses", report.report.dailyExpenses],
-                          ["Tomorrow's expenses", report.report.expectedExpensesTomorrow],
-                          ['Plan for tomorrow', report.report.planOfActionTomorrow],
-                        ] as const
-                      )
-                        .filter(([, v]) => v && v.trim())
-                        .map(([label, value]) => (
+                      {writtenRows(report.report).map(([label, value]) => (
                           <View
                             key={label}
                             style={[styles.written, { backgroundColor: theme.backgroundElement }]}>

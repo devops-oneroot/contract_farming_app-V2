@@ -549,6 +549,12 @@ export type DayReportRow = {
 export type DayWritten = {
   dailyReport: string;
   dailyExpenses: string;
+  foodExpense?: number;
+  meterStart?: number;
+  meterEnd?: number;
+  totalKm?: number;
+  foodBills?: string[];
+  expenseBills?: string[];
   expectedExpensesTomorrow: string;
   planOfActionTomorrow: string;
   at: string;
@@ -762,6 +768,10 @@ export type DailyReport = {
   role: string;
   dailyReport: string;
   dailyExpenses: string;
+  foodExpense?: number;
+  meterStart?: number;
+  meterEnd?: number;
+  totalKm?: number;
   expectedExpensesTomorrow: string;
   planOfActionTomorrow: string;
   date: string;
@@ -1228,7 +1238,7 @@ export const api = {
     farmerMobile: string;
   }) => request<{ ok: boolean; callLogId: string }>('/api/plivo/click-to-call', { method: 'POST', body: JSON.stringify(body) }),
 
-  createDailyReport: (body: {
+  createDailyReport: async (body: {
     userId: string;
     userName?: string;
     role?: string;
@@ -1236,7 +1246,29 @@ export const api = {
     dailyExpenses?: string;
     expectedExpensesTomorrow?: string;
     planOfActionTomorrow?: string;
-  }) => request<DailyReport>('/api/daily-reports', { method: 'POST', body: JSON.stringify(body) }),
+    foodExpense?: number;
+    meterStart?: number;
+    meterEnd?: number;
+    /** Optional bill photos. */
+    foodBills?: { uri: string; name: string; type: string }[];
+    expenseBills?: { uri: string; name: string; type: string }[];
+  }): Promise<DailyReport> => {
+    const { foodBills = [], expenseBills = [], ...fields } = body;
+    // No photos: plain JSON, as before.
+    if (!foodBills.length && !expenseBills.length) {
+      return request<DailyReport>('/api/daily-reports', { method: 'POST', body: JSON.stringify(fields) });
+    }
+    const form = new FormData();
+    Object.entries(fields).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) form.append(k, String(v));
+    });
+    foodBills.forEach((p) => form.append('foodBills', p as any));
+    expenseBills.forEach((p) => form.append('expenseBills', p as any));
+    const res = await fetch(`${BASE_URL}/api/daily-reports`, { method: 'POST', body: form, headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not submit report.');
+    return data as DailyReport;
+  },
   listDailyReports: (userId: string) => request<DailyReport[]>(`/api/daily-reports?user=${userId}`),
 
   // ----- Farm visits -----
