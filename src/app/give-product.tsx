@@ -211,6 +211,18 @@ async function shrink(uri: string) {
  * Two steps, quick-commerce style: build a basket from the product grid, then
  * confirm quantities and prices and photograph the crop before and after.
  */
+/** "In hand: 12" - green with stock, red at none. */
+function InHandTag({ qty }: { qty: number }) {
+  const none = qty <= 0;
+  return (
+    <ThemedText
+      type="small"
+      style={{ marginTop: 2, fontSize: 11, fontWeight: '700', color: none ? Brand.danger : Brand.primary }}>
+      {none ? 'Not in your stock' : `In hand: ${qty}`}
+    </ThemedText>
+  );
+}
+
 export default function GiveProductScreen() {
   const theme = useTheme();
   const scheme = useColorScheme();
@@ -305,6 +317,14 @@ export default function GiveProductScreen() {
     if (notesFocused && keyboardHeight > 0) confirmScrollRef.current?.scrollToEnd({ animated: true });
   }, [notesFocused, keyboardHeight]);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * What this agent holds, per product and size - stock the office distributed
+   * to them. Null until loaded, or when their stock is not being counted yet
+   * (then there is no limit to show, and the server does not check either).
+   */
+  const [stockHeld, setStockHeld] = useState<Map<string, number> | null>(null);
+  /** In hand for an offer, or null when stock is not being counted. */
+  const inHand = (o: Offer) => (stockHeld ? stockHeld.get(o._id) ?? 0 : null);
 
   const crop = crops.find((c) => c._id === cropId) ?? null;
 
@@ -343,6 +363,15 @@ export default function GiveProductScreen() {
     if (!buyerId) return;
     (async () => {
       try {
+        // Their stock: shown on every product, and the cart cannot go past it.
+        if (user) {
+          api
+            .myStock(user._id)
+            .then((s) =>
+              setStockHeld(s.since ? new Map(s.lines.map((l) => [offerId(l.product, l.variant), l.inHand])) : null)
+            )
+            .catch(() => setStockHeld(null));
+        }
         const [cropList, productList, saleList] = await Promise.all([
           // An FPO has no Crop records — its crops are names on the FPO itself.
           toFpo ? Promise.resolve([] as Crop[]) : api.listCrops(farmerId),
@@ -516,7 +545,17 @@ export default function GiveProductScreen() {
   const gstAll =
     Math.round((tax.cgst + tax.sgst + chargesTax.cgst + chargesTax.sgst) * 100) / 100;
 
-  const add = (o: Offer) =>
+  const add = (o: Offer) => {
+    const have = inHand(o);
+    if (have !== null && have <= 0) {
+      setError(`${o.name}${o.variantId ? ` ${o.unit}` : ''} is not in your stock. Ask the stock in-charge for more.`);
+      return;
+    }
+    setError(null);
+    addLine(o);
+  };
+
+  const addLine = (o: Offer) =>
     setCart((c) => ({
       ...c,
       [o._id]: {
@@ -529,7 +568,16 @@ export default function GiveProductScreen() {
       },
     }));
 
-  const setQty = (p: Offer, qty: number) =>
+  const setQty = (p: Offer, qty: number) => {
+    const have = inHand(p);
+    if (have !== null && qty > have) {
+      setError(`You have only ${have} of ${p.name}${p.variantId ? ` ${p.unit}` : ''} in hand.`);
+      return;
+    }
+    setQtyLine(p, qty);
+  };
+
+  const setQtyLine = (p: Offer, qty: number) =>
     setCart((c) => {
       if (qty <= 0) {
         const { [p._id]: _drop, ...rest } = c;
@@ -1020,6 +1068,10 @@ export default function GiveProductScreen() {
                             <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.cardMeta}>
                               {multi ? rows.map((o) => o.unit).join(' · ') : single.unit || ' '}
                             </ThemedText>
+                            {/* What they hold, from the stock the office gave them. */}
+                            {stockHeld ? (
+                              <InHandTag qty={rows.reduce((n, o) => n + Math.max(inHand(o) ?? 0, 0), 0)} />
+                            ) : null}
                           </Pressable>
                         </View>
                       );
@@ -1110,6 +1162,7 @@ export default function GiveProductScreen() {
                                             {o.unit || (rows.length > 1 ? 'Standard' : '1 pack')}
                                           </ThemedText>
                                           <ThemedText style={styles.optionPrice}>{money(o.price)}</ThemedText>
+                                          {stockHeld ? <InHandTag qty={Math.max(inHand(o) ?? 0, 0)} /> : null}
                                           {line ? (
                                             <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
                                               {line.qty} added · {money(line.qty * o.price)}

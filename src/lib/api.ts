@@ -1319,6 +1319,9 @@ export const api = {
    * addressed to them plus anything sent to whoever is free.
    */
   /** The agent's own stock ledger: what they were given and sold, day by day. */
+  /** What the agent holds right now, per product and size (counts only). */
+  myStock: (userId: string) =>
+    request<{ since: string | null; lines: StockLedger['lines'] }>(`/api/stock/mine/${userId}`),
   myStockLedger: (userId: string, days = 30) =>
     request<StockLedger>(`/api/stock/mine/${userId}/ledger?days=${days}`),
 
