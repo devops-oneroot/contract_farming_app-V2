@@ -26,7 +26,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { DayWorkSheet } from '@/components/day-work-sheet';
 import { CameraCapture } from '@/components/camera-capture';
-import { api, DayReport, DayStats } from '@/lib/api';
+import { api, DailyReport, DayReport, DayStats } from '@/lib/api';
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -146,6 +146,14 @@ export default function DailyReportScreen() {
   /** The records behind the counts: who, their number, how much land. */
   const [report, setReport] = useState<DayReport | null>(null);
   const [dayOpen, setDayOpen] = useState(false);
+  /** Which day the work sheet shows: undefined is today. */
+  const [dayDate, setDayDate] = useState<string | undefined>(undefined);
+  /** Today's form, or the reports filed on earlier days. */
+  const [tab, setTab] = useState<'today' | 'history'>('today');
+  /** Every report this agent has filed, newest first. null while loading. */
+  const [history, setHistory] = useState<DailyReport[] | null>(null);
+  /** The history card opened up to show its full text. */
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   // ----- Toast -----
   const [toast, setToast] = useState<string | null>(null);
@@ -180,8 +188,14 @@ export default function DailyReportScreen() {
           setAlreadyReported(true);
           showToast(ALREADY_REPORTED);
         }
+        // The same list is the History tab: newest first.
+        setHistory(
+          [...list].sort(
+            (a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime()
+          )
+        );
       })
-      .catch(() => {});
+      .catch(() => setHistory([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -480,13 +494,166 @@ export default function DailyReportScreen() {
     </View>
   );
 
+  /** Local YYYY-MM-DD, the form the day sheet asks the server for. */
+  const dayKeyOf = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  /** Every report filed before, newest first: what was written, spent and planned. */
+  const renderHistory = () => {
+    if (history === null) {
+      return (
+        <View style={styles.histEmpty}>
+          <ActivityIndicator color={GREEN} />
+        </View>
+      );
+    }
+    if (!history.length) {
+      return (
+        <View style={styles.histEmpty}>
+          <Ionicons name="document-text-outline" size={34} color={theme.textSecondary} />
+          <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+            No reports yet. Your submitted daily reports will show here.
+          </ThemedText>
+        </View>
+      );
+    }
+    return history.map((r) => {
+      const when = new Date(r.date || r.createdAt);
+      const isToday = sameDay(when, new Date());
+      const open = expanded === r._id;
+      const sections = [
+        { label: "Today's Work", icon: 'document-text-outline' as const, text: r.dailyReport },
+        { label: "Today's Expenses", icon: 'cash-outline' as const, text: r.dailyExpenses },
+        { label: 'Plan of Action (Next day)', icon: 'calendar-outline' as const, text: r.planOfActionTomorrow },
+        { label: 'Expected Expenses (Next day)', icon: 'wallet-outline' as const, text: r.expectedExpensesTomorrow },
+      ].filter((s) => s.text && s.text.trim());
+      return (
+        <View key={r._id} style={[styles.histCard, { backgroundColor: theme.backgroundElement }]}>
+          <Pressable onPress={() => setExpanded(open ? null : r._id)} style={styles.histHead}>
+            <View style={styles.histDate}>
+              <ThemedText type="smallBold" style={{ color: GREEN, fontSize: 18, lineHeight: 20 }}>
+                {when.getDate()}
+              </ThemedText>
+              <ThemedText type="small" style={{ color: GREEN, fontSize: 10, fontWeight: '700' }}>
+                {when.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}
+              </ThemedText>
+            </View>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold">
+                {when.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric' })}
+                {isToday ? '  ·  Today' : ''}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                Filed {new Date(r.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+              </ThemedText>
+            </View>
+            <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.textSecondary} />
+          </Pressable>
+
+          {/* The figures at a glance. */}
+          <View style={styles.histChips}>
+            {r.meterEnd ? (
+              <View style={styles.histChip}>
+                <Ionicons name="speedometer-outline" size={12} color={GREEN} />
+                <ThemedText type="small" style={styles.histChipText}>
+                  {r.totalKm} km
+                </ThemedText>
+              </View>
+            ) : null}
+            {r.foodExpense ? (
+              <View style={styles.histChip}>
+                <Ionicons name="fast-food-outline" size={12} color={GREEN} />
+                <ThemedText type="small" style={styles.histChipText}>
+                  Food ₹{Number(r.foodExpense).toLocaleString('en-IN')}
+                </ThemedText>
+              </View>
+            ) : null}
+          </View>
+
+          {sections.length ? (
+            sections.map((s) => (
+              <View key={s.label} style={{ marginTop: Spacing.two }}>
+                <View style={styles.labelRow}>
+                  <Ionicons name={s.icon} size={14} color={GREEN} />
+                  <ThemedText type="small" style={{ fontWeight: '700', fontSize: 12 }}>
+                    {s.label}
+                  </ThemedText>
+                </View>
+                <ThemedText type="small" numberOfLines={open ? undefined : 2} style={{ lineHeight: 19 }}>
+                  {s.text.trim()}
+                </ThemedText>
+              </View>
+            ))
+          ) : (
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+              No written notes in this report.
+            </ThemedText>
+          )}
+
+          <View style={styles.histActions}>
+            {sections.length ? (
+              <Pressable onPress={() => setExpanded(open ? null : r._id)} hitSlop={8}>
+                <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                  {open ? 'Show less' : 'Read full report'}
+                </ThemedText>
+              </Pressable>
+            ) : (
+              <View />
+            )}
+            <Pressable
+              onPress={() => {
+                setDayDate(dayKeyOf(when));
+                setDayOpen(true);
+              }}
+              hitSlop={8}
+              style={styles.histDayBtn}>
+              <Ionicons name="list-outline" size={14} color={GREEN} />
+              <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                View day
+              </ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      );
+    });
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScreenHeader onBack={() => router.back()} title="Daily Report" />
 
+          {/* Today's form, or what was filed on earlier days. */}
+          <View style={[styles.tabs, { backgroundColor: theme.backgroundElement }]}>
+            {(
+              [
+                { key: 'today', label: 'Today', icon: 'create-outline' },
+                { key: 'history', label: `History${history?.length ? ` (${history.length})` : ''}`, icon: 'time-outline' },
+              ] as const
+            ).map((t) => {
+              const on = tab === t.key;
+              return (
+                <Pressable
+                  key={t.key}
+                  onPress={() => setTab(t.key)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: on }}
+                  style={[styles.tab, on && { backgroundColor: GREEN }]}>
+                  <Ionicons name={t.icon} size={15} color={on ? '#fff' : theme.textSecondary} />
+                  <ThemedText type="smallBold" style={{ color: on ? '#fff' : theme.textSecondary }}>
+                    {t.label}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+            {tab === 'history' ? (
+              renderHistory()
+            ) : (
+            <>
             <ThemedText type="subtitle" style={{ fontSize: 20 }}>
               {today}
             </ThemedText>
@@ -640,7 +807,10 @@ export default function DailyReportScreen() {
                 down to the writing. */}
             {report && (
               <Pressable
-                onPress={() => setDayOpen(true)}
+                onPress={() => {
+                  setDayDate(undefined);
+                  setDayOpen(true);
+                }}
                 style={({ pressed }) => [styles.viewBtn, pressed && { opacity: 0.85 }]}>
                 <Ionicons name="list-outline" size={18} color={GREEN} />
                 <View style={{ flex: 1 }}>
@@ -659,13 +829,15 @@ export default function DailyReportScreen() {
                 <Ionicons name="chevron-forward" size={18} color={GREEN} />
               </Pressable>
             )}
+            </>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
 
       {/* Over the form, not instead of it: the half-written report stays
           visible behind, so opening this never feels like leaving it. */}
-      <DayWorkSheet visible={dayOpen} userId={user?._id} onClose={() => setDayOpen(false)} />
+      <DayWorkSheet visible={dayOpen} userId={user?._id} date={dayDate} onClose={() => setDayOpen(false)} />
 
       {/* Camera or gallery — a bill photo needn't be taken on the spot. */}
       {cameraFor && <CameraCapture onCapture={addBill} onClose={() => setCameraFor(null)} />}
@@ -696,6 +868,56 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, paddingTop: Spacing.two },
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.three },
+  tabs: {
+    flexDirection: 'row',
+    marginHorizontal: Spacing.four,
+    marginTop: Spacing.two,
+    marginBottom: Spacing.one,
+    padding: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 9,
+  },
+  histEmpty: { alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.six, paddingHorizontal: Spacing.four },
+  histCard: { borderRadius: Spacing.three, padding: Spacing.three, marginTop: Spacing.three },
+  histHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  histDate: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: `${GREEN}1A`,
+  },
+  histChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: Spacing.two },
+  histChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: `${GREEN}14`,
+  },
+  histChipText: { fontSize: 11, fontWeight: '700', color: GREEN },
+  histActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.three,
+    paddingTop: Spacing.two,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#88888855',
+  },
+  histDayBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   viewBtn: {
     flexDirection: 'row',
     alignItems: 'center',
