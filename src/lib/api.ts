@@ -618,6 +618,16 @@ export type DiseaseReply = {
 
 /** A crop that looked diseased, sent up for advice. */
 /** One entry in a field executive's stock ledger. `qty` is signed: + in, - out. */
+/** One notification in the bell's list. `data.type` says what it is about. */
+export type AppNotification = {
+  _id: string;
+  title: string;
+  body: string;
+  data: { type?: string; reportId?: string; farmerId?: string; cropId?: string; [k: string]: unknown };
+  read: boolean;
+  createdAt: string;
+};
+
 export type StockLedgerEntry = {
   kind: 'opening' | 'issue' | 'return' | 'adjust' | 'sale';
   at: string;
@@ -630,13 +640,52 @@ export type StockLedgerEntry = {
   note: string;
   /** That product's balance after this entry. */
   balance: number;
+  /** Office entries: the admin's mobile, and their name. */
+  by?: string;
+  byName?: string;
+  /** Sales: who bought, the bill, the price and what this line came to. */
+  buyer?: string;
+  buyerKind?: 'farmer' | 'fpo';
+  invoiceNo?: string;
+  saleId?: string;
+  unitPrice?: number;
+  amount?: number;
+};
+
+/** One product as the agent holds it. The extra figures are absent on an older server. */
+export type StockLedgerLine = {
+  product: string;
+  variant: string | null;
+  name: string;
+  unit: string;
+  inHand: number;
+  opening?: number;
+  issued?: number;
+  returned?: number;
+  adjusted?: number;
+  allocated?: number;
+  sold?: number;
+  soldAmount?: number;
+  price?: number;
+  /** In hand at today's catalog price. */
+  value?: number;
 };
 
 export type StockLedger = {
   /** When their stock started being counted; null if it never was. */
   since: string | null;
-  lines: { product: string; variant: string | null; name: string; unit: string; inHand: number }[];
-  days: { day: string; received: number; sold: number; entries: StockLedgerEntry[] }[];
+  lines: StockLedgerLine[];
+  days: {
+    day: string;
+    received: number;
+    sold: number;
+    returned?: number;
+    adjusted?: number;
+    /** Sales value that day. */
+    amount?: number;
+    entries: StockLedgerEntry[];
+  }[];
+  totals?: { allocated: number; sold: number; soldAmount: number; inHand: number; value: number; returned: number };
 };
 
 export type DiseaseReport = {
@@ -1064,6 +1113,15 @@ export const api = {
   getUser: (id: string) => request<User>(`/api/users/${id}`),
 
   // Save the device push token (FCM) for notifications.
+  /** The bell: this user's notifications, newest first, and how many are unread. */
+  listNotifications: (userId: string, limit = 50) =>
+    request<{ unread: number; items: AppNotification[] }>(`/api/notifications/mine/${userId}?limit=${limit}`),
+  /** Mark notifications read: the ids given, or all of them. */
+  markNotificationsRead: (userId: string, ids?: string[]) =>
+    request<{ marked: number }>(`/api/notifications/mine/${userId}/read`, {
+      method: 'POST',
+      body: JSON.stringify(ids ? { ids } : {}),
+    }),
   savePushToken: (id: string, token: string) =>
     request<{ ok: boolean }>(`/api/users/${id}/push-token`, {
       method: 'PATCH',

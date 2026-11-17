@@ -18,6 +18,7 @@ import { TextInput } from '@/components/exo-text';
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -364,6 +365,7 @@ export default function OnboardedScreen() {
         <View style={styles.header}>
           <ThemedText style={styles.headerTitle}>Onboarded</ThemedText>
           {/* Farmers removed from this list are not gone — they wait here. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.three }}>
           <Pressable
             onPress={() => router.push('/farmer-trash' as never)}
             hitSlop={10}
@@ -373,6 +375,8 @@ export default function OnboardedScreen() {
               Trash
             </ThemedText>
           </Pressable>
+          <NotificationBell />
+          </View>
         </View>
 
         {/* Search by name or number, and narrow by registration date */}

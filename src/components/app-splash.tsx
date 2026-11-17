@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Photos } from '@/constants/photos';
 import { Brand, LogoAspect, Logos } from '@/constants/theme';
+import { appVersion, lastUpdatedDate } from '@/lib/app-version';
 
 /** Long enough to be seen, short enough not to hold anyone up in the field. */
 const MIN_SHOW_MS = 1200;
@@ -84,11 +85,10 @@ export function AppSplash({ ready }: { ready: boolean }) {
   );
 }
 
-/** "Version 1.0.0", plus the update date when running an over-the-air update. */
+/** "Version 1.0.1 · 17 Nov 2026": the version with the date of the code now running. */
 function versionLine() {
-  const base = 'Version 1.0.0';
-  if (!Updates.createdAt || Updates.isEmbeddedLaunch) return base;
-  return `${base} · ${Updates.createdAt.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+  const date = lastUpdatedDate();
+  return `Version ${appVersion}${date ? ` · ${date}` : ''}`;
 }
 
 const styles = StyleSheet.create({

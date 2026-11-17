@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, V
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -68,11 +69,14 @@ export default function CallsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.header}>
-          <ThemedText style={styles.headerTitle}>Call Logs</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Calls you made to farmers
-          </ThemedText>
+        <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', gap: Spacing.three }]}>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={styles.headerTitle}>Call Logs</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Calls you made to farmers
+            </ThemedText>
+          </View>
+          <NotificationBell />
         </View>
 
         <ScrollView

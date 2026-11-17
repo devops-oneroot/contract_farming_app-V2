@@ -4,7 +4,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { PostHogProvider } from 'posthog-react-native';
 import { useEffect } from 'react';
-import { LogBox, Platform, StyleSheet, View } from 'react-native';
+import { AppState, LogBox, Platform, StyleSheet, View } from 'react-native';
 
 import { AppSplash } from '@/components/app-splash';
 import { LocationGate } from '@/components/location-gate';
@@ -13,7 +13,8 @@ import { Brand, MaxContentWidth } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
 import { applyPendingUpdate } from '@/lib/ota';
-import { registerForPush } from '@/lib/push';
+import { refreshUnread } from '@/lib/notifications';
+import { listenForPushes, refreshPushToken, registerForPush } from '@/lib/push';
 // Imported for its side effect: the background location task must be defined
 // before the OS can deliver a fix to it, including on a cold start into the
 // background. Registering it inside a screen would be too late.
@@ -60,6 +61,30 @@ function RootNavigation() {
   // Register this device for push notifications once signed in.
   useEffect(() => {
     if (user?._id) registerForPush(user._id);
+  }, [user?._id]);
+
+  // A push arriving bumps the bell; tapping one opens the Notifications screen.
+  useEffect(() => {
+    if (!user?._id) return;
+    refreshUnread(user._id);
+    return listenForPushes(
+      () => refreshUnread(user._id),
+      () => router.push('/notifications' as never)
+    );
+  }, [user?._id, router]);
+
+  // Back in the foreground: re-save the push token (the server drops one
+  // Firebase rejects) and refresh the bell's count.
+  useEffect(() => {
+    if (!user?._id) return;
+    const id = user._id;
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        refreshPushToken(id);
+        refreshUnread(id);
+      }
+    });
+    return () => sub.remove();
   }, [user?._id]);
 
   return (

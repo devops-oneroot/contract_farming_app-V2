@@ -44,3 +44,6 @@ example
 /ios
 /android
 google-services.json
+
+# Downloaded APKs
+builds/

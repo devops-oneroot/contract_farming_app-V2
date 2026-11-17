@@ -24,6 +24,7 @@ import { usePostHog } from 'posthog-react-native';
 import { AgronomistHome } from '@/components/agronomist-home';
 import { CallFab } from '@/components/call-fab';
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -296,13 +297,7 @@ function FarmerHome() {
           <Pressable onPress={helpPrompt} hitSlop={8} style={styles.iconBtn}>
             <Ionicons name="help-circle-outline" size={24} color={theme.textSecondary} />
           </Pressable>
-          <Pressable
-            onPress={() => Alert.alert('Notifications', 'You have no new notifications.')}
-            hitSlop={8}
-            style={styles.iconBtn}>
-            <Ionicons name="notifications-outline" size={22} color={theme.textSecondary} />
-            <View style={styles.bellDot} />
-          </Pressable>
+          <NotificationBell />
         </View>
 
         <ScrollView

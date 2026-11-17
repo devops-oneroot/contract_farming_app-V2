@@ -10,6 +10,7 @@ import { CallFab } from '@/components/call-fab';
 import { DailyNoticeToast } from '@/components/daily-notice-toast';
 import { Photos } from '@/constants/photos';
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -263,6 +264,8 @@ export function AgronomistHome() {
                 contentFit="contain"
                 accessibilityLabel="OneRoot"
               />
+              <View style={{ flex: 1 }} />
+              <NotificationBell light />
               <Pressable
                 onPress={() => router.push('/(tabs)/profile' as never)}
                 hitSlop={6}

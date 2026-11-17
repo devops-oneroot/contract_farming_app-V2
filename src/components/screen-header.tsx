@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedText } from '@/components/themed-text';
 import { CardShadow, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -16,10 +17,13 @@ export function ScreenHeader({
   title,
   onBack,
   right,
+  bell = true,
 }: {
   title: ReactNode;
   onBack: () => void;
   right?: ReactNode;
+  /** The notifications bell, on every screen by default. */
+  bell?: boolean;
 }) {
   const theme = useTheme();
   return (
@@ -35,7 +39,12 @@ export function ScreenHeader({
       <ThemedText style={styles.title} numberOfLines={1}>
         {title}
       </ThemedText>
-      {right ? <View style={styles.right}>{right}</View> : null}
+      {right || bell ? (
+        <View style={styles.right}>
+          {right}
+          {bell ? <NotificationBell /> : null}
+        </View>
+      ) : null}
     </View>
   );
 }

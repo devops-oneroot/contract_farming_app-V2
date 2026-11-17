@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SafeAreaView, TOP_GAP } from '@/components/safe-area-view';
 
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -29,6 +30,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { api, isAgronomist, Role } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { PHOTO_CREDITS } from '@/constants/photos';
+import { appVersion, lastUpdatedDate, versionWithDate } from '@/lib/app-version';
 
 const GREEN = Brand.primary;
 
@@ -40,15 +42,13 @@ const GREEN = Brand.primary;
  * colour change tells you something arrived, this tells you exactly what. All
  * values are null in development, where expo-updates is disabled.
  */
+/** Which code is running: the base build, or an over-the-air update and its id. */
 function bundleLabel() {
   if (__DEV__) return 'dev';
   if (Updates.isEmbeddedLaunch) return 'base build';
-  const when = Updates.createdAt
-    ? Updates.createdAt.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-    : null;
   // First segment of the update UUID is plenty to tell two updates apart.
   const id = Updates.updateId ? Updates.updateId.slice(0, 8) : null;
-  return ['update', when, id].filter(Boolean).join(' · ');
+  return ['update', id].filter(Boolean).join(' ');
 }
 // The header band: the brand's deep orange, so white text reads on it.
 const GREEN_DARK = Brand.primaryDark;
@@ -149,6 +149,10 @@ export default function ProfileScreen() {
       <View style={[styles.headerBand, { paddingTop: insets.top + TOP_GAP + Spacing.two }]}>
         <View style={styles.topRow}>
           <Image source={Logos.horizontalWhite} style={styles.brandLogo} contentFit="contain" accessibilityLabel="OneRoot" />
+          <View style={{ flex: 1 }} />
+          <View style={{ marginRight: Spacing.two }}>
+            <NotificationBell light />
+          </View>
           {/* At the top, in red: easy to find, and clearly not a normal action. */}
           <Pressable
             onPress={confirmSignOut}
@@ -254,7 +258,7 @@ export default function ProfileScreen() {
             onPress={() =>
               Alert.alert(
                 'OneRoot',
-                `OneRoot — contract farming, simplified.\n\nSupport: 9606031878\nVersion 1.0.0\n\nPhotos:\n${PHOTO_CREDITS.join('\n')}`
+                `OneRoot — contract farming, simplified.\n\nSupport: 9606031878\nVersion ${appVersion}${lastUpdatedDate() ? ` (updated ${lastUpdatedDate()})` : ''}\n\nPhotos:\n${PHOTO_CREDITS.join('\n')}`
               )
             }
             style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}>
@@ -275,7 +279,7 @@ export default function ProfileScreen() {
             OneRoot · Contract farming, simplified
           </ThemedText>
           <ThemedText type="small" style={styles.version}>
-            v1.0.0 · {bundleLabel()}
+            {versionWithDate()} · {bundleLabel()}
           </ThemedText>
         </View>
       </ScrollView>

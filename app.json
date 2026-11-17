@@ -2,13 +2,14 @@
   "expo": {
     "name": "CF-OneRoot",
     "slug": "cf-oneroot-v2",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/images/icon.png"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.oneroot.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +19,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.mycompany.myapp",
+      "package": "com.oneroot.app",
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.CAMERA",

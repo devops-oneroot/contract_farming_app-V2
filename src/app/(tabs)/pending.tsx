@@ -19,6 +19,7 @@ import { SafeAreaView } from '@/components/safe-area-view';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
+import { NotificationBell } from '@/components/notification-bell';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Brand, CardShadow, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -285,13 +286,16 @@ export default function PendingScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.header}>
+        <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', gap: Spacing.three }]}>
+          <View style={{ flex: 1 }}>
           <ThemedText style={styles.headerTitle}>Today's Tasks</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {today}
             {visibleTasks.length > 0 ? ` · ${pendingCount} to verify` : ''}
             {followUps.length > 0 ? ` · ${followUps.length} after photo${followUps.length > 1 ? 's' : ''} due` : ''}
           </ThemedText>
+          </View>
+          <NotificationBell />
         </View>
 
         {/* Crop filter */}
