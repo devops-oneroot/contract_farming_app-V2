@@ -35,7 +35,14 @@ import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
-import { api, Crop, Product, ProductSale } from '@/lib/api';
+import { api, Crop, PaymentMethod, Product, ProductSale } from '@/lib/api';
+
+/** The company's UPI QR (Axis Bank, ONE ROOT.FARM), shown when the buyer pays by UPI. */
+const UPI_QR = require('@/assets/images/brand/upi-qr.jpeg');
+const PAYMENT_OPTIONS: { key: PaymentMethod; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
+  { key: 'upi', label: 'UPI', icon: 'qr-code-outline' },
+];
 
 const GREEN = Brand.primary;
 const GREEN_SURFACE = Brand.surface;
@@ -294,6 +301,12 @@ export default function GiveProductScreen() {
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<Record<string, Line>>({});
   const [notes, setNotes] = useState('');
+  /**
+   * How the buyer paid. Nothing is ticked to start with, so the agent has to
+   * answer rather than leave a default standing; UPI opens the company QR.
+   */
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
   // Which product we are photographing.
   const [cameraFor, setCameraFor] = useState<string | null>(null);
   /**
@@ -633,6 +646,10 @@ export default function GiveProductScreen() {
       setError('Check the prices — they must be numbers and cannot be negative.');
       return;
     }
+    if (!paymentMethod) {
+      setError('Choose how the buyer paid: Cash or UPI.');
+      return;
+    }
     if (missingPhotos.length) {
       setError(
         `Take a before photo for ${missingPhotos
@@ -699,6 +716,7 @@ export default function GiveProductScreen() {
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
         notes: notes.trim(),
+        paymentMethod,
         // A full instant at local midday, not a bare date: read as UTC it
         // would still land on the right day in IST, where a bare midnight
         // would not.
@@ -1699,6 +1717,47 @@ export default function GiveProductScreen() {
                 </ThemedText>
               </View>
 
+              {/* How the buyer paid. UPI brings up the company QR to scan. */}
+              <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
+                Payment method
+              </ThemedText>
+              <View style={styles.payRow} accessibilityRole="radiogroup">
+                {PAYMENT_OPTIONS.map((o) => {
+                  const on = paymentMethod === o.key;
+                  return (
+                    <Pressable
+                      key={o.key}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: on }}
+                      onPress={() => {
+                        setPaymentMethod(o.key);
+                        setError(null);
+                        if (o.key === 'upi') setQrOpen(true);
+                      }}
+                      style={[
+                        styles.payOption,
+                        { backgroundColor: theme.backgroundElement, borderColor: on ? GREEN : 'transparent' },
+                      ]}>
+                      <View style={[styles.radio, { borderColor: on ? GREEN : theme.textSecondary }]}>
+                        {on && <View style={styles.radioDot} />}
+                      </View>
+                      <Ionicons name={o.icon} size={18} color={on ? GREEN : theme.textSecondary} />
+                      <ThemedText type="smallBold" style={{ color: on ? GREEN : theme.text }}>
+                        {o.label}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {paymentMethod === 'upi' && (
+                <Pressable onPress={() => setQrOpen(true)} style={styles.showQrBtn}>
+                  <Ionicons name="qr-code" size={16} color={GREEN} />
+                  <ThemedText type="smallBold" style={{ color: GREEN }}>
+                    Show UPI QR
+                  </ThemedText>
+                </Pressable>
+              )}
+
               <ThemedText type="small" themeColor="textSecondary" style={styles.fieldLabel}>
                 Notes
               </ThemedText>
@@ -1731,6 +1790,38 @@ export default function GiveProductScreen() {
       </SafeAreaView>
 
       {cameraFor && <CameraCapture onCapture={handleCapture} onClose={() => setCameraFor(null)} />}
+
+      {/* The company UPI QR, for the buyer to scan and pay. */}
+      <Modal visible={qrOpen} transparent animationType="fade" onRequestClose={() => setQrOpen(false)}>
+        <Pressable style={styles.qrBackdrop} onPress={() => setQrOpen(false)}>
+          <Pressable onPress={() => {}} style={[styles.qrCard, { backgroundColor: theme.background }]}>
+            <View style={styles.qrHead}>
+              <View style={{ flex: 1 }}>
+                <ThemedText type="subtitle">Pay by UPI</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Ask the buyer to scan and pay {money(total)}
+                </ThemedText>
+              </View>
+              <Pressable
+                onPress={() => setQrOpen(false)}
+                hitSlop={10}
+                accessibilityLabel="Close"
+                style={styles.sheetClose}>
+                <Ionicons name="close" size={20} color={theme.text} />
+              </Pressable>
+            </View>
+            <Image
+              source={UPI_QR}
+              style={[styles.qrImage, { maxHeight: height * 0.6 }]}
+              contentFit="contain"
+              accessibilityLabel="OneRoot UPI QR code, Axis Bank, ONE ROOT.FARM"
+            />
+            <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+              ONE ROOT.FARM · Axis Bank
+            </ThemedText>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -2145,6 +2236,36 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   error: { color: Brand.danger, marginTop: Spacing.two },
+  // ----- Payment method -----
+  payRow: { flexDirection: 'row', gap: Spacing.two, marginTop: Spacing.one },
+  payOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+  },
+  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: GREEN },
+  showQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+    borderColor: GREEN,
+    backgroundColor: GREEN_SURFACE,
+  },
+  qrBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: Spacing.four },
+  qrCard: { width: '100%', maxWidth: 420, borderRadius: Spacing.four, padding: Spacing.four, gap: Spacing.three },
+  qrHead: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.three },
+  qrImage: { width: '100%', aspectRatio: 3 / 4, borderRadius: Spacing.three },
   saveBtn: {
     backgroundColor: GREEN,
     borderRadius: Spacing.three,

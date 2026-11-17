@@ -482,7 +482,12 @@ export function saleBuyer(s: {
   };
 }
 
+/** How a buyer paid for a sale. */
+export type PaymentMethod = 'cash' | 'upi';
+
 export type ProductSale = {
+  /** How the buyer paid; null on sales recorded before the app asked. */
+  paymentMethod?: PaymentMethod | null;
   /** Set instead of `farmer` when an FPO bought. Snapshots, like the farmer's. */
   fpo?: string | null;
   fpoName?: string;
@@ -1747,6 +1752,8 @@ export const api = {
     latitude?: number | null;
     longitude?: number | null;
     notes?: string;
+    /** How the buyer paid: cash, or UPI to the company QR. */
+    paymentMethod?: PaymentMethod;
     /**
      * When the sale actually happened, for a record being entered after the
      * fact. Left off for a sale being made now, and the server dates it.
@@ -1788,6 +1795,7 @@ export const api = {
     if (body.latitude != null) form.append('latitude', String(body.latitude));
     if (body.longitude != null) form.append('longitude', String(body.longitude));
     if (body.notes) form.append('notes', body.notes);
+    if (body.paymentMethod) form.append('paymentMethod', body.paymentMethod);
     if (body.soldAt) form.append('soldAt', body.soldAt);
     const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
