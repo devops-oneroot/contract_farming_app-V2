@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { usePostHog } from 'posthog-react-native';
 import { useEffect, useMemo, useState } from 'react';
@@ -19,6 +18,7 @@ import { TextInput } from '@/components/exo-text';
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { CameraCapture } from '@/components/camera-capture';
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
@@ -105,13 +105,11 @@ export default function AgronomistVerifyScreen() {
       .catch(() => {});
   }, [productIds]);
 
-  const pickFromGallery = async () => {
+  // Proof is taken there and then with the in-app camera - no gallery.
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const pickFromGallery = () => {
     setError(null);
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-    });
-    if (!res.canceled && res.assets[0]?.uri) setPickedUri(res.assets[0].uri);
+    setCameraOpen(true);
   };
 
   const submit = async (status: VerifyStatus) => {
@@ -265,7 +263,7 @@ export default function AgronomistVerifyScreen() {
               </>
             )}
 
-            {/* Photo proof (from gallery) — separate for operation vs product */}
+            {/* Photo proof (taken with the camera) — separate for operation vs product */}
             <ThemedText type="smallBold" style={styles.sectionLabel}>
               {mode === 'product' ? 'Product proof photo' : 'Operation proof photo'} (optional)
             </ThemedText>
@@ -273,17 +271,17 @@ export default function AgronomistVerifyScreen() {
               <View style={styles.photoWrap}>
                 <Image source={{ uri: previewUri }} style={styles.photo} contentFit="cover" />
                 <Pressable onPress={pickFromGallery} style={styles.changePhoto}>
-                  <Ionicons name="images-outline" size={16} color="#fff" />
+                  <Ionicons name="camera-outline" size={16} color="#fff" />
                   <ThemedText type="small" style={{ color: '#fff', fontWeight: '700' }}>
-                    Change
+                    Retake
                   </ThemedText>
                 </Pressable>
               </View>
             ) : (
               <Pressable onPress={pickFromGallery} style={[styles.uploadBtn, { borderColor: GREEN }]}>
-                <Ionicons name="images-outline" size={22} color={GREEN} />
+                <Ionicons name="camera-outline" size={22} color={GREEN} />
                 <ThemedText type="smallBold" style={{ color: GREEN }}>
-                  Upload from gallery
+                  Take photo
                 </ThemedText>
               </Pressable>
             )}
@@ -338,6 +336,15 @@ export default function AgronomistVerifyScreen() {
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+      {cameraOpen && (
+        <CameraCapture
+          onCapture={(uri) => {
+            setPickedUri(uri);
+            setCameraOpen(false);
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
     </View>
   );
 }
