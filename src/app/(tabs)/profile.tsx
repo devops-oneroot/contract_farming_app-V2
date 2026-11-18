@@ -13,6 +13,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { TextInput } from '@/components/exo-text';
@@ -139,6 +140,11 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const scheme = useColorScheme();
   const insets = useSafeAreaInsets();
+  // The orange header takes at most 38% of the screen's height. Short phones
+  // get a smaller avatar and tighter gaps so everything still fits inside it.
+  const { height: screenH } = useWindowDimensions();
+  const headerMax = Math.round(screenH * 0.38);
+  const compact = screenH < 760;
   const router = useRouter();
   const { user, updateUser, signOut } = useAuth();
 
@@ -202,7 +208,12 @@ export default function ProfileScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       {/* Header: brand colour with soft circles for depth, the person in the middle. */}
-      <View style={[styles.headerBand, { paddingTop: insets.top + TOP_GAP + Spacing.two }]}>
+      <View
+        style={[
+          styles.headerBand,
+          { paddingTop: insets.top + TOP_GAP + (compact ? 0 : Spacing.two), maxHeight: headerMax },
+          compact && { paddingBottom: Spacing.three },
+        ]}>
         <View pointerEvents="none" style={[styles.blob, styles.blobA]} />
         <View pointerEvents="none" style={[styles.blob, styles.blobB]} />
         <View pointerEvents="none" style={[styles.blob, styles.blobC]} />
@@ -213,10 +224,10 @@ export default function ProfileScreen() {
         </View>
 
         {/* Avatar on top, then the name, the role, and mobile + location - centred. */}
-        <View style={styles.heroRow}>
+        <View style={[styles.heroRow, compact && { marginTop: Spacing.one, gap: Spacing.one }]}>
           <Pressable onPress={openEdit} accessibilityLabel="Edit profile" style={styles.avatarRing}>
-            <View style={styles.avatar}>
-              <ThemedText style={styles.avatarText}>{initials(user?.name)}</ThemedText>
+            <View style={[styles.avatar, compact && styles.avatarCompact]}>
+              <ThemedText style={[styles.avatarText, compact && styles.avatarTextCompact]}>{initials(user?.name)}</ThemedText>
             </View>
             <View style={styles.avatarBadge}>
               <Ionicons name="pencil" size={10} color="#fff" />
@@ -416,13 +427,13 @@ const styles = StyleSheet.create({
     backgroundColor: GREEN_DARK,
     alignItems: 'center',
     paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.six + Spacing.two,
+    paddingBottom: Spacing.four,
     borderBottomLeftRadius: 32,
     borderBottomRightRadius: 32,
     overflow: 'hidden',
   },
   // Stacked and centred: avatar, then name, role, and mobile + location.
-  heroRow: { alignItems: 'center', gap: Spacing.two, width: '100%', marginTop: Spacing.three },
+  heroRow: { alignItems: 'center', gap: Spacing.two, width: '100%', marginTop: Spacing.two },
   heroText: { alignItems: 'center', width: '100%' },
   // Soft light circles behind the header, for depth.
   blob: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.09)' },
@@ -485,6 +496,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.4)',
   },
   avatarText: { color: GREEN_DARK, fontSize: 28, fontWeight: '800', lineHeight: 34 },
+  avatarCompact: { width: 60, height: 60, borderRadius: 30 },
+  avatarTextCompact: { fontSize: 22, lineHeight: 28 },
   heroName: { color: '#fff', fontSize: 22, lineHeight: 28, textAlign: 'center' },
   // White pill with the deep orange text: the role reads first after the name.
   rolePill: {
