@@ -86,6 +86,9 @@ export default function PendingScreen() {
   const [afterFor, setAfterFor] = useState<FollowUp | null>(null);
   const [uploading, setUploading] = useState(false);
   const [cropFilter, setCropFilter] = useState<string | null>(null);
+  /** Tapping a counter in the progress card narrows the list to that status. */
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [sheetTask, setSheetTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +193,7 @@ export default function PendingScreen() {
       setError(e?.message || 'Could not load tasks.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [user]);
 
@@ -266,14 +270,26 @@ export default function PendingScreen() {
 
   // Distinct crops present in today's tasks, for the filter chips.
   const crops = useMemo(() => [...new Set(tasks.map((t) => t.crop))].sort(), [tasks]);
-  const visibleTasks = useMemo(
+  // The crop filter sets the scope; the counters are worked out within it.
+  const cropTasks = useMemo(
     () => (cropFilter ? tasks.filter((t) => t.crop === cropFilter) : tasks),
     [tasks, cropFilter]
   );
-  const pendingCount = useMemo(
-    () => visibleTasks.filter((t) => t.status === 'unverified').length,
-    [visibleTasks]
+  const counts = useMemo(
+    () => ({
+      unverified: cropTasks.filter((t) => t.status === 'unverified').length,
+      done: cropTasks.filter((t) => t.status === 'done').length,
+      not_done: cropTasks.filter((t) => t.status === 'not_done').length,
+    }),
+    [cropTasks]
   );
+  const visibleTasks = useMemo(
+    () => (statusFilter ? cropTasks.filter((t) => t.status === statusFilter) : cropTasks),
+    [cropTasks, statusFilter]
+  );
+  const pendingCount = counts.unverified;
+  const checked = counts.done + counts.not_done;
+  const progress = cropTasks.length ? checked / cropTasks.length : 0;
 
   const badge = (t: Task) => {
     if (t.status === 'done')
@@ -286,115 +302,187 @@ export default function PendingScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={[styles.header, { flexDirection: 'row', alignItems: 'center', gap: Spacing.three }]}>
+        <View style={styles.header}>
           <View style={{ flex: 1 }}>
-          <ThemedText style={styles.headerTitle}>Today's Tasks</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {today}
-            {visibleTasks.length > 0 ? ` · ${pendingCount} to verify` : ''}
-            {followUps.length > 0 ? ` · ${followUps.length} after photo${followUps.length > 1 ? 's' : ''} due` : ''}
-          </ThemedText>
+            <ThemedText style={styles.headerTitle}>Today's Tasks</ThemedText>
+            <View style={styles.dateRow}>
+              <Ionicons name="calendar-outline" size={13} color={theme.textSecondary} />
+              <ThemedText type="small" themeColor="textSecondary">
+                {today}
+              </ThemedText>
+            </View>
           </View>
           <NotificationBell />
         </View>
-
-        {/* Crop filter */}
-        {crops.length > 1 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterScroll}
-            contentContainerStyle={styles.filterRow}>
-            {[null, ...crops].map((c) => {
-              const on = cropFilter === c;
-              return (
-                <Pressable
-                  key={c ?? 'all'}
-                  onPress={() => setCropFilter(c)}
-                  style={[
-                    styles.chip,
-                    { backgroundColor: on ? GREEN : '#fff', borderColor: on ? GREEN : 'rgba(255,127,0,0.25)' },
-                  ]}>
-                  <ThemedText style={[styles.chipText, { color: on ? '#fff' : theme.text }]}>
-                    {c ?? 'All'}
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        )}
 
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                load();
+              }}
+              colors={[GREEN]}
+              tintColor={GREEN}
+            />
+          }>
+          {/* Progress: how much of today's checking is done, and the counters as filters. */}
+          {!loading && cropTasks.length > 0 && (
+            <ThemedView style={styles.progressCard}>
+              <View style={styles.progressHead}>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.progressTitle}>
+                    {checked} of {cropTasks.length} checked
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 12 }}>
+                    {pendingCount ? `${pendingCount} still to verify today` : 'All of today’s practices are checked 🎉'}
+                  </ThemedText>
+                </View>
+                <ThemedText style={styles.progressPct}>{Math.round(progress * 100)}%</ThemedText>
+              </View>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${Math.max(progress * 100, progress ? 4 : 0)}%` }]} />
+              </View>
+              <View style={styles.counterRow}>
+                {(
+                  [
+                    { key: 'unverified', label: 'To verify', n: counts.unverified, color: AMBER, icon: 'time' },
+                    { key: 'done', label: 'Verified', n: counts.done, color: Brand.secondary, icon: 'checkmark-circle' },
+                    { key: 'not_done', label: 'Not done', n: counts.not_done, color: RED, icon: 'close-circle' },
+                  ] as const
+                ).map((c) => {
+                  const on = statusFilter === c.key;
+                  return (
+                    <Pressable
+                      key={c.key}
+                      onPress={() => setStatusFilter(on ? null : c.key)}
+                      style={[styles.counter, { backgroundColor: on ? c.color : `${c.color}14`, borderColor: `${c.color}55` }]}>
+                      <Ionicons name={c.icon} size={14} color={on ? '#fff' : c.color} />
+                      <ThemedText style={[styles.counterNum, { color: on ? '#fff' : c.color }]}>{c.n}</ThemedText>
+                      <ThemedText style={[styles.counterLabel, { color: on ? '#fff' : theme.text }]} numberOfLines={1}>
+                        {c.label}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ThemedView>
+          )}
+
+          {/* Crop filter */}
+          {crops.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+              {[null, ...crops].map((c) => {
+                const on = cropFilter === c;
+                return (
+                  <Pressable
+                    key={c ?? 'all'}
+                    onPress={() => setCropFilter(c)}
+                    style={[styles.chip, on ? { backgroundColor: GREEN, borderColor: GREEN } : { backgroundColor: theme.card }]}>
+                    <Ionicons name={c ? 'leaf' : 'apps'} size={12} color={on ? '#fff' : GREEN} />
+                    <ThemedText style={[styles.chipText, { color: on ? '#fff' : theme.text }]}>{c ?? 'All crops'}</ThemedText>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+
           {/* Follow-up after-photos that came due — owed by whoever sold the
               product, so they sit above the day's verification work. */}
           {followUps.length > 0 && (
-            <View style={{ marginBottom: Spacing.three }}>
+            <View style={{ gap: Spacing.two }}>
               <View style={styles.sectionHead}>
-                <Ionicons name="camera" size={16} color={AMBER} />
-                <ThemedText type="smallBold" style={{ flex: 1 }}>
-                  After photos due ({followUps.length})
-                </ThemedText>
+                <View style={[styles.sectionIcon, { backgroundColor: `${AMBER}22` }]}>
+                  <Ionicons name="camera" size={14} color={AMBER} />
+                </View>
+                <ThemedText style={styles.sectionTitle}>After photos due</ThemedText>
+                <View style={[styles.countBadge, { backgroundColor: AMBER }]}>
+                  <ThemedText style={styles.countBadgeText}>{followUps.length}</ThemedText>
+                </View>
               </View>
-              {followUps.map((f) => (
-                <ThemedView
-                  key={`${f.saleId}-${f.index}`}
-                  type="backgroundElement"
-                  style={styles.followCard}>
-                  {f.beforePhotoUrl ? (
-                    <TappablePhoto
-                      uri={f.beforePhotoUrl}
-                      style={styles.followThumb}
-                      caption="before photo"
-                    />
-                  ) : (
-                    <View style={[styles.followThumb, { backgroundColor: 'rgba(127,127,127,0.15)' }]} />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <ThemedText type="smallBold" numberOfLines={1}>
-                      {f.product}
-                    </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {f.farmer}
-                      {f.crop ? ` · ${f.crop}` : ''}
-                    </ThemedText>
-                    <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
-                      Given {Math.max(0, Math.floor((Date.now() - new Date(f.soldAt).getTime()) / DAY_MS))}{' '}
-                      days ago
-                    </ThemedText>
-                  </View>
-                  <Pressable
-                    onPress={() => setAfterFor(f)}
-                    disabled={uploading}
-                    style={[styles.followBtn, { opacity: uploading ? 0.6 : 1 }]}>
-                    {uploading ? (
-                      <ActivityIndicator color="#fff" size="small" />
+              {followUps.map((f) => {
+                const days = Math.max(0, Math.floor((Date.now() - new Date(f.soldAt).getTime()) / DAY_MS));
+                return (
+                  <ThemedView key={`${f.saleId}-${f.index}`} style={styles.followCard}>
+                    {f.beforePhotoUrl ? (
+                      <TappablePhoto uri={f.beforePhotoUrl} style={styles.followThumb} caption="before photo" />
                     ) : (
-                      <>
-                        <Ionicons name="camera-outline" size={16} color="#fff" />
-                        <ThemedText type="small" style={{ color: '#fff', fontWeight: '700' }}>
-                          Photo
-                        </ThemedText>
-                      </>
+                      <View style={[styles.followThumb, { backgroundColor: 'rgba(127,127,127,0.15)' }]} />
                     )}
-                  </Pressable>
-                </ThemedView>
-              ))}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <ThemedText style={styles.cardTitle} numberOfLines={1}>
+                        {f.product}
+                      </ThemedText>
+                      <View style={styles.metaRow}>
+                        <Ionicons name="person-outline" size={12} color={theme.textSecondary} />
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.metaText}>
+                          {f.farmer}
+                          {f.crop ? ` · ${f.crop}` : ''}
+                        </ThemedText>
+                      </View>
+                      <View style={[styles.statusPill, { backgroundColor: `${AMBER}18` }]}>
+                        <Ionicons name="hourglass-outline" size={11} color={AMBER} />
+                        <ThemedText style={[styles.statusText, { color: AMBER }]}>Given {days} days ago</ThemedText>
+                      </View>
+                    </View>
+                    <Pressable
+                      onPress={() => setAfterFor(f)}
+                      disabled={uploading}
+                      style={({ pressed }) => [styles.followBtn, { opacity: uploading ? 0.6 : pressed ? 0.85 : 1 }]}>
+                      {uploading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                      ) : (
+                        <>
+                          <Ionicons name="camera-outline" size={16} color="#fff" />
+                          <ThemedText style={styles.followBtnText}>Photo</ThemedText>
+                        </>
+                      )}
+                    </Pressable>
+                  </ThemedView>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Today's practices */}
+          {!loading && visibleTasks.length > 0 && (
+            <View style={styles.sectionHead}>
+              <View style={[styles.sectionIcon, { backgroundColor: `${GREEN}1F` }]}>
+                <Ionicons name="leaf" size={14} color={GREEN} />
+              </View>
+              <ThemedText style={styles.sectionTitle}>
+                {statusFilter === 'unverified'
+                  ? 'To verify'
+                  : statusFilter === 'done'
+                    ? 'Verified'
+                    : statusFilter === 'not_done'
+                      ? 'Not done'
+                      : "Today's practices"}
+              </ThemedText>
+              <View style={[styles.countBadge, { backgroundColor: GREEN }]}>
+                <ThemedText style={styles.countBadgeText}>{visibleTasks.length}</ThemedText>
+              </View>
             </View>
           )}
 
           {loading ? (
             <ActivityIndicator style={{ marginTop: Spacing.six }} color={GREEN} />
           ) : visibleTasks.length === 0 && followUps.length === 0 ? (
-            <ThemedView type="backgroundElement" style={styles.empty}>
-              <Ionicons name="checkmark-done-circle-outline" size={40} color={theme.textSecondary} />
+            <ThemedView style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <Ionicons name="checkmark-done" size={30} color={Brand.secondary} />
+              </View>
+              <ThemedText type="smallBold">{statusFilter ? 'Nothing here' : 'All clear for today'}</ThemedText>
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-                {cropFilter
-                  ? `No ${cropFilter} practices scheduled today.`
-                  : 'No practices scheduled for any farmer today.'}
+                {statusFilter
+                  ? 'No practices with this status. Tap the counter again to see all.'
+                  : cropFilter
+                    ? `No ${cropFilter} practices scheduled today.`
+                    : 'No practices scheduled for any farmer today.'}
               </ThemedText>
               {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
             </ThemedView>
@@ -405,36 +493,45 @@ export default function PendingScreen() {
                 <Pressable
                   key={`${t.cropId}-${t.dayN}-${i}`}
                   onPress={() => setSheetTask(t)}
-                  style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}>
-                  <View style={[styles.dayBadge, { backgroundColor: `${b.color}22` }]}>
-                    <ThemedText type="small" style={[styles.dayBadgeLabel, { color: b.color }]}>
-                      DAY
-                    </ThemedText>
+                  style={({ pressed }) => [styles.card, { backgroundColor: theme.card, borderLeftColor: b.color }, pressed && { opacity: 0.85 }]}>
+                  <View style={[styles.dayBadge, { backgroundColor: `${b.color}1C` }]}>
+                    <ThemedText style={[styles.dayBadgeLabel, { color: b.color }]}>DAY</ThemedText>
                     <ThemedText style={[styles.dayBadgeNum, { color: b.color }]}>{t.dayN}</ThemedText>
-                    {/* Red light on the day badge: this farm has no boundary yet. */}
-                    {!t.hasBoundary && <View style={styles.boundaryDot} />}
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <ThemedText type="smallBold" numberOfLines={1}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <ThemedText style={styles.cardTitle} numberOfLines={1}>
                       {t.op}
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {t.farmer} · {t.crop}
-                    </ThemedText>
-                    <View style={[styles.statusPill, { backgroundColor: `${b.color}18` }]}>
-                      <Ionicons name={b.icon} size={12} color={b.color} />
-                      <ThemedText type="small" style={{ color: b.color, fontWeight: '700' }}>
-                        {b.label}
+                    <View style={styles.metaRow}>
+                      <Ionicons name="person-outline" size={12} color={theme.textSecondary} />
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.metaText}>
+                        {t.farmer}
                       </ThemedText>
+                      <Ionicons name="leaf-outline" size={12} color={theme.textSecondary} style={{ marginLeft: 4 }} />
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.metaText}>
+                        {t.crop}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.tagRow}>
+                      <View style={[styles.statusPill, { backgroundColor: `${b.color}18` }]}>
+                        <Ionicons name={b.icon} size={11} color={b.color} />
+                        <ThemedText style={[styles.statusText, { color: b.color }]}>{b.label}</ThemedText>
+                      </View>
+                      {/* This farm has no boundary drawn yet. */}
+                      {!t.hasBoundary && (
+                        <View style={[styles.statusPill, { backgroundColor: `${RED}14` }]}>
+                          <Ionicons name="map-outline" size={11} color={RED} />
+                          <ThemedText style={[styles.statusText, { color: RED }]}>No boundary</ThemedText>
+                        </View>
+                      )}
                     </View>
                   </View>
                   {t.farmerMobile ? (
                     <Pressable
-                      onPress={() =>
-                        callFarmer(user, { _id: t.farmerId, name: t.farmer, mobile: t.farmerMobile })
-                      }
+                      onPress={() => callFarmer(user, { _id: t.farmerId, name: t.farmer, mobile: t.farmerMobile })}
                       hitSlop={8}
-                      style={styles.callBtn}>
+                      accessibilityLabel={`Call ${t.farmer}`}
+                      style={({ pressed }) => [styles.callBtn, pressed && { opacity: 0.8 }]}>
                       <Ionicons name="call" size={16} color="#fff" />
                     </Pressable>
                   ) : (
@@ -537,112 +634,134 @@ export default function PendingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, paddingBottom: Spacing.three },
-  filterScroll: { flexGrow: 0 },
-  filterRow: {
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.two,
-    paddingBottom: Spacing.three,
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.three,
   },
-  chip: {
-    height: 30,
-    paddingHorizontal: 14,
-    borderRadius: 15,
+  headerTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 },
+  scroll: { paddingHorizontal: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: Spacing.three },
+  // ----- Progress card -----
+  progressCard: { borderRadius: Radius.lg, padding: Spacing.three, gap: Spacing.two, ...CardShadow },
+  progressHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  progressTitle: { fontSize: 16, fontWeight: '800', lineHeight: 21 },
+  progressPct: { fontSize: 22, fontWeight: '800', color: GREEN },
+  progressTrack: { height: 8, borderRadius: 4, backgroundColor: 'rgba(127,127,127,0.15)', overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 4, backgroundColor: Brand.secondary },
+  counterRow: { flexDirection: 'row', gap: Spacing.two, marginTop: 2 },
+  counter: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  counterNum: { fontSize: 15, fontWeight: '800' },
+  counterLabel: { fontSize: 11, fontWeight: '600', flexShrink: 1 },
+  // ----- Crop chips -----
+  filterRow: { gap: Spacing.two, alignItems: 'center', paddingVertical: 2 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 32,
+    paddingHorizontal: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,127,0,0.25)',
   },
-  chipText: { fontSize: 13, fontWeight: '600' },
-  scroll: { paddingHorizontal: Spacing.four, paddingBottom: BottomTabInset + Spacing.four, gap: Spacing.two },
-  sectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    marginBottom: Spacing.two,
-  },
+  chipText: { fontSize: 13, fontWeight: '700' },
+  // ----- Sections -----
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: 2 },
+  sectionIcon: { width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  sectionTitle: { flex: 1, fontSize: 15, fontWeight: '800' },
+  countBadge: { minWidth: 24, height: 22, borderRadius: 11, paddingHorizontal: 7, alignItems: 'center', justifyContent: 'center' },
+  countBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  // ----- Cards -----
   followCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
     padding: Spacing.three,
     borderRadius: Radius.lg,
-    marginBottom: Spacing.two,
-    borderLeftWidth: 3,
+    borderLeftWidth: 4,
     borderLeftColor: AMBER,
     ...CardShadow,
   },
-  followThumb: { width: 48, height: 48, borderRadius: Spacing.two },
+  followThumb: { width: 54, height: 54, borderRadius: Radius.md },
   followBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.one,
+    gap: 5,
     backgroundColor: GREEN,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.two,
+    paddingVertical: 9,
+    borderRadius: Radius.md,
   },
-  empty: {
-    marginTop: Spacing.four,
-    padding: Spacing.five,
-    borderRadius: Spacing.three,
-    alignItems: 'center',
-    gap: Spacing.three,
-  },
+  followBtnText: { color: '#fff', fontSize: 13, fontWeight: '800' },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
-    backgroundColor: '#fff',
     padding: Spacing.three,
     borderRadius: Radius.lg,
+    borderLeftWidth: 4,
     ...CardShadow,
   },
-  headerTitle: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
-  // Red light on the corner of the day badge — farm boundary still missing.
-  boundaryDot: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    width: 13,
-    height: 13,
-    borderRadius: 6.5,
-    backgroundColor: RED,
-    borderWidth: 2,
-    borderColor: '#fff', // ring separates the light from the badge behind it
-    shadowColor: RED,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.7,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  dayBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: Spacing.three,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayBadgeLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1 },
-  dayBadgeNum: { fontSize: 20, fontWeight: '800' },
+  cardTitle: { fontSize: 15, fontWeight: '700', lineHeight: 20 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  metaText: { fontSize: 12, flexShrink: 1 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     alignSelf: 'flex-start',
-    paddingHorizontal: Spacing.two,
+    paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: Spacing.four,
-    marginTop: 4,
+    borderRadius: 999,
   },
-  callBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: GREEN,
+  statusText: { fontSize: 11, fontWeight: '700' },
+  dayBadge: {
+    width: 52,
+    height: 56,
+    borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  dayBadgeLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  dayBadgeNum: { fontSize: 21, fontWeight: '800', lineHeight: 25 },
+  callBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Brand.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  empty: {
+    marginTop: Spacing.two,
+    padding: Spacing.five,
+    borderRadius: Radius.lg,
+    alignItems: 'center',
+    gap: Spacing.two,
+    ...CardShadow,
+  },
+  emptyIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Brand.secondarySurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.one,
   },
   error: { color: '#e5484d' },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },

@@ -40,7 +40,8 @@ function RootNavigation() {
     SplashScreen.hideAsync();
 
     const seg = segments[0];
-    const inAuthScreen = seg === 'login' || seg === 'signup';
+    // Sign-in only: accounts are created by a senior agronomist inside the app.
+    const inAuthScreen = seg === 'login';
     const inOnboarding = seg === 'onboarding';
 
     if (user) {
@@ -97,7 +98,6 @@ function RootNavigation() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="login" />
-          <Stack.Screen name="signup" />
         </Stack>
         {/* Location must stay on while signed in - it records visits and the day's distance. */}
         {user && Platform.OS !== 'web' ? <LocationGate key={user._id} role={user.role} /> : null}

@@ -1,20 +1,19 @@
-import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import type { TextInput as RNTextInput } from 'react-native';
+import { StyleSheet, type TextInput as RNTextInput } from 'react-native';
+import { Text } from '@/components/exo-text';
 
-import {
-  AuthButton,
-  AuthError,
-  AuthField,
-  AuthHeading,
-  AuthScaffold,
-  AuthSwitch,
-} from '@/components/auth-scaffold';
+import { AUTH, AuthButton, AuthError, AuthField, AuthHeading, AuthScaffold } from '@/components/auth-scaffold';
 import { useAuth } from '@/context/auth';
 import { api } from '@/lib/api';
 
+/** Oneroot@ + a 10-digit number: the longest password anyone is given. */
+const MAX_PASSWORD = 18;
+
+function AuthNote({ text }: { text: string }) {
+  return <Text style={styles.note}>{text}</Text>;
+}
+
 export default function LoginScreen() {
-  const router = useRouter();
   const { signIn } = useAuth();
 
   const [mobile, setMobile] = useState('');
@@ -36,7 +35,7 @@ export default function LoginScreen() {
 
   const onSignIn = async () => {
     clearError();
-    if (!/^\d{7,15}$/.test(mobile.trim())) return fail('Please enter a valid phone number.', 'mobile');
+    if (!/^\d{10}$/.test(mobile.trim())) return fail('Enter your 10-digit phone number.', 'mobile');
     if (!password) return fail('Please enter your password.', 'password');
 
     setSubmitting(true);
@@ -60,14 +59,14 @@ export default function LoginScreen() {
         icon="call-outline"
         value={mobile}
         onChangeText={(t) => {
-          setMobile(t.replace(/[^\d]/g, ''));
+          setMobile(t.replace(/[^\d]/g, '').slice(0, 10));
           if (errorField === 'mobile') clearError();
         }}
-        placeholder="Enter your phone number"
+        placeholder="10-digit phone number"
         keyboardType="phone-pad"
         textContentType="telephoneNumber"
         autoComplete="tel"
-        maxLength={15}
+        maxLength={10}
         returnKeyType="next"
         onSubmitEditing={() => passwordRef.current?.focus()}
         error={errorField === 'mobile'}
@@ -86,6 +85,8 @@ export default function LoginScreen() {
         placeholder="Enter your password"
         textContentType="password"
         autoComplete="password"
+        // The default password is Oneroot@ + 10 digits: 18 characters.
+        maxLength={MAX_PASSWORD}
         returnKeyType="go"
         onSubmitEditing={onSignIn}
         error={errorField === 'password'}
@@ -96,7 +97,12 @@ export default function LoginScreen() {
 
       <AuthButton label="Sign In" onPress={onSignIn} loading={submitting} />
 
-      <AuthSwitch prompt="New to OneRoot?" action="Create account" onPress={() => router.replace('/signup')} />
+      {/* No sign-up: accounts are created by a senior agronomist. */}
+      <AuthNote text="New to OneRoot? Ask your senior agronomist to create your account." />
     </AuthScaffold>
   );
 }
+
+const styles = StyleSheet.create({
+  note: { marginTop: 18, textAlign: 'center', fontSize: 13, color: AUTH.subtitle },
+});

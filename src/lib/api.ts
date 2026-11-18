@@ -55,6 +55,8 @@ export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
 export const isAgronomist = (role?: Role) =>
   role === 'agronomist' || role === 'senior_agronomist';
 export const isSenior = (role?: Role) => role === 'senior_agronomist';
+/** The accounts a senior agronomist can create in the app. */
+export type AccountRole = 'agronomist' | 'senior_agronomist';
 
 export type Farmer = {
   _id: string;
@@ -1031,13 +1033,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  onboard: (body: {
-    role: Role;
+  /**
+   * A senior agronomist creates an account for a team member. There is no
+   * public sign-up; the new person is not signed in (no token comes back).
+   */
+  createAccount: (body: {
+    role: AccountRole;
     name: string;
     mobile: string;
     password: string;
     location: { latitude: number | null; longitude: number | null };
-  }) => request<AuthResponse>('/api/users/onboard', { method: 'POST', body: JSON.stringify(body) }),
+  }) => request<User>('/api/users/onboard', { method: 'POST', body: JSON.stringify(body) }),
 
   login: (mobile: string, password: string) =>
     request<AuthResponse>('/api/users/login', {

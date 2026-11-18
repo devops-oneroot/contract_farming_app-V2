@@ -238,6 +238,15 @@ export function AgronomistHome() {
         params: { scope: 'onboardedToday', t: String(Date.now()) },
       },
     },
+    // Today's sales in rupees, short enough for a quarter of the row; opens who got what.
+    {
+      value: shortRupees(stats?.salesTotal ?? 0),
+      label: 'Sales',
+      icon: 'cash' as const,
+      tint: '#2F7BD8',
+      well: '#E8F1FC',
+      route: '/products-given',
+    },
     { value: `${stats?.distanceKm ?? 0}`, label: 'km today', icon: 'navigate' as const, tint: Brand.accent, well: Brand.accentSurface, route: '/tracking' },
   ];
 
@@ -493,6 +502,13 @@ export function AgronomistHome() {
       <DailyNoticeToast userId={user?._id} />
     </View>
   );
+}
+
+/** ₹0, ₹950, ₹1.2k, ₹1.5L - fits a stat cell. */
+function shortRupees(n: number) {
+  if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
+  if (n >= 1000) return `₹${(n / 1000).toFixed(1)}k`;
+  return `₹${Math.round(n)}`;
 }
 
 const styles = StyleSheet.create({

@@ -65,10 +65,74 @@ function roleName(role?: Role) {
   return 'Farmer';
 }
 
-function roleLabel(role?: Role) {
-  if (role === 'senior_agronomist') return '⭐ SENIOR AGRONOMIST';
-  if (role === 'agronomist') return '👨‍🌾 AGRONOMIST';
-  return '🌱 FARMER';
+function roleIcon(role?: Role): keyof typeof Ionicons.glyphMap {
+  if (role === 'senior_agronomist') return 'ribbon';
+  if (role === 'agronomist') return 'flask';
+  return 'leaf';
+}
+
+/** Icon colours for the menu: one family per kind of thing. */
+const TINTS = {
+  orange: Brand.primary,
+  green: Brand.secondary,
+  gold: Brand.accent,
+  blue: '#2F7BD8',
+} as const;
+
+/** "Pradeep R" -> "PR", "Teja" -> "TE". */
+function initials(name?: string) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+
+/** One menu line: tinted icon, title and an optional second line, chevron. */
+function MenuRow({
+  icon,
+  tint,
+  title,
+  sub,
+  onPress,
+  danger,
+  last,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  title: string;
+  sub?: string;
+  onPress: () => void;
+  danger?: boolean;
+  last?: boolean;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      style={({ pressed }) => [
+        styles.row,
+        !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.backgroundElement },
+        pressed && { opacity: 0.6 },
+      ]}>
+      <View style={[styles.rowIcon, { backgroundColor: `${tint}1F` }]}>
+        <Ionicons name={icon} size={17} color={tint} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <ThemedText type="small" style={[styles.menuTitle, danger && { color: Brand.danger }]}>
+          {title}
+        </ThemedText>
+        {sub ? (
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.menuSub}>
+            {sub}
+          </ThemedText>
+        ) : null}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={danger ? Brand.danger : theme.textSecondary} />
+    </Pressable>
+  );
 }
 
 export default function ProfileScreen() {
@@ -129,160 +193,154 @@ export default function ProfileScreen() {
 
   const hasLocation = user?.location?.latitude != null && user?.location?.longitude != null;
 
-  const infoRows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
-    { icon: 'call-outline', label: 'Mobile', value: user?.mobile ?? '—' },
-    { icon: 'person-outline', label: 'Role', value: roleName(user?.role) },
-    {
-      icon: 'location-outline',
-      label: 'Location',
-      value: hasLocation
-        ? `${user!.location.latitude!.toFixed(3)}, ${user!.location.longitude!.toFixed(3)}`
-        : 'Not set',
-    },
-  ];
+  /** Shown in the header, under the name. */
+  const locationText = hasLocation
+    ? `${user!.location.latitude!.toFixed(3)}, ${user!.location.longitude!.toFixed(3)}`
+    : 'Location not set';
 
-  const divider = { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.backgroundElement };
 
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
-      {/* Curved green header */}
+      {/* Header: brand colour with soft circles for depth, the person in the middle. */}
       <View style={[styles.headerBand, { paddingTop: insets.top + TOP_GAP + Spacing.two }]}>
+        <View pointerEvents="none" style={[styles.blob, styles.blobA]} />
+        <View pointerEvents="none" style={[styles.blob, styles.blobB]} />
+        <View pointerEvents="none" style={[styles.blob, styles.blobC]} />
         <View style={styles.topRow}>
           <Image source={Logos.horizontalWhite} style={styles.brandLogo} contentFit="contain" accessibilityLabel="OneRoot" />
           <View style={{ flex: 1 }} />
-          <View style={{ marginRight: Spacing.two }}>
-            <NotificationBell light />
-          </View>
-          {/* At the top, in red: easy to find, and clearly not a normal action. */}
-          <Pressable
-            onPress={confirmSignOut}
-            hitSlop={6}
-            accessibilityLabel="Log out"
-            style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.85 }]}>
-            <Ionicons name="log-out-outline" size={16} color="#fff" />
-            <ThemedText style={styles.signOutText}>Log Out</ThemedText>
+          <NotificationBell light />
+        </View>
+
+        {/* Avatar on top, then the name, the role, and mobile + location - centred. */}
+        <View style={styles.heroRow}>
+          <Pressable onPress={openEdit} accessibilityLabel="Edit profile" style={styles.avatarRing}>
+            <View style={styles.avatar}>
+              <ThemedText style={styles.avatarText}>{initials(user?.name)}</ThemedText>
+            </View>
+            <View style={styles.avatarBadge}>
+              <Ionicons name="pencil" size={10} color="#fff" />
+            </View>
           </Pressable>
-        </View>
-        <View style={styles.avatar}>
-          <ThemedText style={styles.avatarText}>{user?.name?.charAt(0)?.toUpperCase() ?? '?'}</ThemedText>
-        </View>
-        <ThemedText type="subtitle" style={styles.heroName}>
-          {user?.name ?? 'User'}
-        </ThemedText>
-        <View style={styles.rolePill}>
-          <ThemedText style={styles.roleText}>{roleLabel(user?.role)}</ThemedText>
+          <View style={styles.heroText}>
+            {/* Line 1: who - the name, and the role beside it. */}
+            <View style={styles.heroLine}>
+              <ThemedText type="subtitle" style={styles.heroName} numberOfLines={1}>
+                {user?.name ?? 'User'}
+              </ThemedText>
+              <View style={styles.rolePill}>
+                <Ionicons name={roleIcon(user?.role)} size={11} color={GREEN_DARK} />
+                <ThemedText style={styles.roleText}>{roleName(user?.role).toUpperCase()}</ThemedText>
+              </View>
+            </View>
+            {/* Line 2: how to reach them - mobile and location. */}
+            <View style={styles.heroMeta}>
+              {user?.mobile ? (
+                <View style={styles.infoChip}>
+                  <Ionicons name="call" size={11} color="#fff" />
+                  <ThemedText style={styles.infoChipText}>{user.mobile}</ThemedText>
+                </View>
+              ) : null}
+              <View style={[styles.infoChip, { flexShrink: 1 }]}>
+                <Ionicons name="location" size={11} color="#fff" />
+                <ThemedText style={styles.infoChipText} numberOfLines={1}>
+                  {locationText}
+                </ThemedText>
+              </View>
+            </View>
+          </View>
         </View>
       </View>
 
-      {/* Scrolls so a short phone can still reach the footer; `flexGrow`
-          keeps it pinned to the bottom when the content is short. */}
-      <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
-        {/* Account details, with Edit right above the values it changes. */}
-        <View style={styles.sectionHead}>
-          <ThemedText type="smallBold" style={{ flex: 1 }}>
-            Account details
-          </ThemedText>
-          <Pressable
-            onPress={openEdit}
-            hitSlop={8}
-            accessibilityLabel="Edit profile"
-            style={({ pressed }) => [styles.editBtn, pressed && { opacity: 0.8 }]}>
-            <Ionicons name="create-outline" size={15} color={GREEN} />
-            <ThemedText style={styles.editText}>Edit</ThemedText>
-          </Pressable>
-        </View>
-        <ThemedView style={[styles.card, { marginTop: -Spacing.two }]}>
-          {infoRows.map((r, i) => (
-            <View key={r.label} style={[styles.row, i < infoRows.length - 1 && divider]}>
-              <View style={styles.rowIcon}>
-                <Ionicons name={r.icon} size={16} color={GREEN} />
-              </View>
-              <ThemedText type="small" themeColor="textSecondary" style={{ width: 82 }}>
-                {r.label}
-              </ThemedText>
-              <ThemedText type="small" numberOfLines={1} style={{ flex: 1, fontWeight: '600' }}>
-                {r.value}
-              </ThemedText>
-            </View>
-          ))}
-        </ThemedView>
+      {/* The menu scrolls between the header and the fixed bottom bar. */}
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
 
-        {/* Actions */}
-        <ThemedView style={styles.card}>
-          {isFarmer && (
-            <Pressable
-              onPress={() => router.push('/geofence')}
-              style={({ pressed }) => [styles.row, divider, pressed && { opacity: 0.6 }]}>
-              <View style={styles.rowIcon}>
-                <Ionicons name="map-outline" size={16} color={GREEN} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <ThemedText type="small" style={{ fontWeight: '600' }}>
-                  Farm boundary (Geofence)
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {geofenceCount >= 3 ? `${geofenceCount} corners marked` : 'Not set — tap to draw'}
-                </ThemedText>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
-            </Pressable>
-          )}
-          <Pressable
-            onPress={() => router.push('/onboarding')}
-            style={({ pressed }) => [styles.row, divider, pressed && { opacity: 0.6 }]}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="play-circle-outline" size={16} color={GREEN} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <ThemedText type="small" style={{ fontWeight: '600' }}>
-                View intro again
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                Replay the welcome slides
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
-          </Pressable>
-          <Pressable
-            onPress={() => Linking.openURL('tel:9606031878').catch(() => {})}
-            style={({ pressed }) => [styles.row, divider, pressed && { opacity: 0.6 }]}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="headset-outline" size={16} color={GREEN} />
-            </View>
-            <ThemedText type="small" style={{ flex: 1, fontWeight: '600' }}>
-              Help & Support
+        {/* Things to do: the farm boundary for a farmer, team accounts for a senior. */}
+        {(isFarmer || user?.role === 'senior_agronomist') && (
+          <>
+            <ThemedText type="smallBold" style={[styles.sectionTitle, styles.sectionGap]}>
+              {isFarmer ? 'MY FARM' : 'TEAM'}
             </ThemedText>
-            <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
-          </Pressable>
-          <Pressable
+            <ThemedView style={styles.card}>
+              {isFarmer && (
+                <MenuRow
+                  icon="map-outline"
+                  tint={TINTS.green}
+                  title="Farm boundary (Geofence)"
+                  sub={geofenceCount >= 3 ? `${geofenceCount} corners marked` : 'Not set — tap to draw'}
+                  onPress={() => router.push('/geofence')}
+                  last
+                />
+              )}
+              {/* Accounts are made here, by a senior agronomist - there is no sign-up. */}
+              {user?.role === 'senior_agronomist' && (
+                <MenuRow
+                  icon="person-add-outline"
+                  tint={TINTS.green}
+                  title="Create account"
+                  sub="Add an agronomist or senior agronomist"
+                  onPress={() => router.push('/create-account' as never)}
+                  last
+                />
+              )}
+            </ThemedView>
+          </>
+        )}
+
+        <ThemedText type="smallBold" style={[styles.sectionTitle, styles.sectionGap]}>
+          HELP & INFO
+        </ThemedText>
+        <ThemedView style={styles.card}>
+          <MenuRow
+            icon="headset-outline"
+            tint={TINTS.blue}
+            title="Help & Support"
+            sub="Call 9606031878"
+            onPress={() => Linking.openURL('tel:9606031878').catch(() => {})}
+          />
+          <MenuRow
+            icon="play-circle-outline"
+            tint={TINTS.gold}
+            title="View intro again"
+            sub="Replay the welcome slides"
+            onPress={() => router.push('/onboarding')}
+          />
+          <MenuRow
+            icon="information-circle-outline"
+            tint={TINTS.orange}
+            title="About OneRoot"
+            sub={`Version ${appVersion}`}
             onPress={() =>
               Alert.alert(
                 'OneRoot',
                 `OneRoot — contract farming, simplified.\n\nSupport: 9606031878\nVersion ${appVersion}${lastUpdatedDate() ? ` (updated ${lastUpdatedDate()})` : ''}\n\nPhotos:\n${PHOTO_CREDITS.join('\n')}`
               )
             }
-            style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="information-circle-outline" size={16} color={GREEN} />
-            </View>
-            <ThemedText type="small" style={{ flex: 1, fontWeight: '600' }}>
-              About OneRoot
-            </ThemedText>
-            <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
-          </Pressable>
+            last
+          />
         </ThemedView>
 
-        {/* Footer pinned to bottom */}
-        <View style={styles.footer}>
-          <Image source={Logos.horizontal} style={styles.footerLogo} contentFit="contain" />
-          <ThemedText type="small" themeColor="textSecondary">
-            OneRoot · Contract farming, simplified
-          </ThemedText>
-          <ThemedText type="small" style={styles.version}>
-            {versionWithDate()} · {bundleLabel()}
-          </ThemedText>
-        </View>
+        {/* Log out: the last menu item, in red so it is never tapped by mistake. */}
+        <Pressable
+          onPress={confirmSignOut}
+          accessibilityRole="button"
+          accessibilityLabel="Log out"
+          style={({ pressed }) => [styles.logoutBtn, styles.sectionGap, pressed && { opacity: 0.75 }]}>
+          <Ionicons name="log-out-outline" size={18} color={Brand.danger} />
+          <ThemedText style={styles.logoutText}>Log out</ThemedText>
+        </Pressable>
       </ScrollView>
+
+      {/* Always at the bottom: the brand and the version running. */}
+      <View style={styles.footer}>
+        <Image source={Logos.horizontal} style={styles.footerLogo} contentFit="contain" />
+        <ThemedText type="small" themeColor="textSecondary">
+          OneRoot · Contract farming, simplified
+        </ThemedText>
+        <ThemedText type="small" style={styles.version}>
+          {versionWithDate()} · {bundleLabel()}
+        </ThemedText>
+      </View>
 
       {/* Edit profile — full screen */}
       <Modal
@@ -358,10 +416,51 @@ const styles = StyleSheet.create({
     backgroundColor: GREEN_DARK,
     alignItems: 'center',
     paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.five,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
+    paddingBottom: Spacing.six + Spacing.two,
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+    overflow: 'hidden',
   },
+  // Stacked and centred: avatar, then name, role, and mobile + location.
+  heroRow: { alignItems: 'center', gap: Spacing.two, width: '100%', marginTop: Spacing.three },
+  heroText: { alignItems: 'center', width: '100%' },
+  // Soft light circles behind the header, for depth.
+  blob: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.09)' },
+  blobA: { width: 220, height: 220, top: -80, right: -60 },
+  blobB: { width: 160, height: 160, bottom: -70, left: -50 },
+  blobC: { width: 90, height: 90, top: 40, left: '45%', backgroundColor: 'rgba(255,255,255,0.05)' },
+  // A soft ring around the avatar, so it lifts off the orange.
+  avatarRing: { padding: 4, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.18)' },
+  // Name on its own line, the role under it.
+  heroLine: { alignItems: 'center', gap: 6, width: '100%' },
+  menuTitle: { fontWeight: '700', fontSize: 15, lineHeight: 20 },
+  menuSub: { fontSize: 13, lineHeight: 18 },
+  infoChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Spacing.four,
+    backgroundColor: 'rgba(0,0,0,0.14)',
+  },
+  infoChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  avatarBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Brand.secondary,
+    borderWidth: 2,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroMeta: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: Spacing.two, marginTop: 10 },
+  sectionTitle: { flex: 1, fontSize: 13, letterSpacing: 0.8, opacity: 0.6 },
+  sectionGap: { marginTop: 2, marginLeft: 2 },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' },
   brandLogo: { height: 22, width: 22 * LogoAspect.horizontal },
   sectionHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.one },
@@ -375,56 +474,58 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.four,
   },
   editText: { color: GREEN, fontSize: 13, fontWeight: '700' },
-  signOutText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   avatar: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: Spacing.three,
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.4)',
   },
-  avatarText: { color: GREEN_DARK, fontSize: 32, fontWeight: '700' },
-  heroName: { color: '#fff', marginTop: Spacing.two },
+  avatarText: { color: GREEN_DARK, fontSize: 28, fontWeight: '800', lineHeight: 34 },
+  heroName: { color: '#fff', fontSize: 22, lineHeight: 28, textAlign: 'center' },
+  // White pill with the deep orange text: the role reads first after the name.
   rolePill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: Spacing.four,
-    marginTop: Spacing.one,
   },
-  roleText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  roleText: { color: GREEN_DARK, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   body: {
-    flexGrow: 1,
     paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.four,
-    gap: Spacing.three,
-    paddingBottom: Spacing.four,
+    paddingTop: Spacing.three,
+    gap: Spacing.two,
+    paddingBottom: Spacing.three,
   },
   card: { borderRadius: Radius.lg, paddingHorizontal: Spacing.three, ...CardShadow },
-  row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.three },
+  row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: 10 },
+  logoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingVertical: 11,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Brand.danger,
+    backgroundColor: Brand.dangerSurface,
+  },
+  logoutText: { color: Brand.danger, fontSize: 15, fontWeight: '800' },
   rowIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     backgroundColor: 'rgba(255,127,0,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Same shape as Edit beside it, in the danger red.
-  signOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: Brand.danger,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: 6,
-    borderRadius: Spacing.four,
-  },
-  footer: { alignItems: 'center', gap: 3, marginTop: 'auto', paddingTop: Spacing.four },
+  footer: { alignItems: 'center', gap: 3, paddingTop: Spacing.two, paddingBottom: Spacing.three },
   footerLogo: { height: 18, width: 18 * LogoAspect.horizontal, marginBottom: 4 },
   version: { color: '#9aa0a6' },
   editTopBar: {
