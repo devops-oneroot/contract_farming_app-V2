@@ -136,15 +136,24 @@ function MenuRow({
   );
 }
 
+/**
+ * Height of everything in the orange header except the avatar and the safe
+ * area: top bar 40, gaps, avatar ring 8, name 28, role 22, mobile + location
+ * chip 26, bottom padding 20, plus a little slack for the font.
+ */
+const HEADER_FIXED = 40 + 8 + 8 + 8 + 28 + 6 + 22 + 10 + 26 + 20 + 10;
+
 export default function ProfileScreen() {
   const theme = useTheme();
   const scheme = useColorScheme();
   const insets = useSafeAreaInsets();
-  // The orange header takes at most 38% of the screen's height. Short phones
-  // get a smaller avatar and tighter gaps so everything still fits inside it.
+  // The orange header aims for at most 38% of the screen's height. Nothing in
+  // it is ever clipped: instead the avatar takes whatever room is left after
+  // the fixed rows (top bar, name, role, mobile + location), between 44 and 76.
   const { height: screenH } = useWindowDimensions();
   const headerMax = Math.round(screenH * 0.38);
-  const compact = screenH < 760;
+  const fixedRows = insets.top + TOP_GAP + HEADER_FIXED;
+  const avatarSize = Math.max(44, Math.min(76, headerMax - fixedRows));
   const router = useRouter();
   const { user, updateUser, signOut } = useAuth();
 
@@ -208,12 +217,7 @@ export default function ProfileScreen() {
   return (
     <View style={[styles.container, { backgroundColor: screenBg }]}>
       {/* Header: brand colour with soft circles for depth, the person in the middle. */}
-      <View
-        style={[
-          styles.headerBand,
-          { paddingTop: insets.top + TOP_GAP + (compact ? 0 : Spacing.two), maxHeight: headerMax },
-          compact && { paddingBottom: Spacing.three },
-        ]}>
+      <View style={[styles.headerBand, { paddingTop: insets.top + TOP_GAP }]}>
         <View pointerEvents="none" style={[styles.blob, styles.blobA]} />
         <View pointerEvents="none" style={[styles.blob, styles.blobB]} />
         <View pointerEvents="none" style={[styles.blob, styles.blobC]} />
@@ -224,10 +228,13 @@ export default function ProfileScreen() {
         </View>
 
         {/* Avatar on top, then the name, the role, and mobile + location - centred. */}
-        <View style={[styles.heroRow, compact && { marginTop: Spacing.one, gap: Spacing.one }]}>
+        <View style={styles.heroRow}>
           <Pressable onPress={openEdit} accessibilityLabel="Edit profile" style={styles.avatarRing}>
-            <View style={[styles.avatar, compact && styles.avatarCompact]}>
-              <ThemedText style={[styles.avatarText, compact && styles.avatarTextCompact]}>{initials(user?.name)}</ThemedText>
+            <View style={[styles.avatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]}>
+              <ThemedText
+                style={[styles.avatarText, { fontSize: Math.round(avatarSize * 0.37), lineHeight: Math.round(avatarSize * 0.45) }]}>
+                {initials(user?.name)}
+              </ThemedText>
             </View>
             <View style={styles.avatarBadge}>
               <Ionicons name="pencil" size={10} color="#fff" />
@@ -427,7 +434,7 @@ const styles = StyleSheet.create({
     backgroundColor: GREEN_DARK,
     alignItems: 'center',
     paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
+    paddingBottom: Spacing.three + Spacing.one,
     borderBottomLeftRadius: 32,
     borderBottomRightRadius: 32,
     overflow: 'hidden',
@@ -496,8 +503,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.4)',
   },
   avatarText: { color: GREEN_DARK, fontSize: 28, fontWeight: '800', lineHeight: 34 },
-  avatarCompact: { width: 60, height: 60, borderRadius: 30 },
-  avatarTextCompact: { fontSize: 22, lineHeight: 28 },
   heroName: { color: '#fff', fontSize: 22, lineHeight: 28, textAlign: 'center' },
   // White pill with the deep orange text: the role reads first after the name.
   rolePill: {
