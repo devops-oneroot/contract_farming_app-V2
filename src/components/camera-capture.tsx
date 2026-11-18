@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, type FlashMode } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
@@ -25,6 +25,19 @@ import { ThemedText } from '@/components/themed-text';
  * is that they were taken THEN AND THERE — the day's start and end. A picture
  * chosen from the roll proves nothing about where anyone was.
  */
+/**
+ * The flash, cycled Off -> On -> Auto from the camera's top bar. Kept between
+ * openings (for as long as the app runs), so an agent who needs it at dusk
+ * does not have to switch it on again for every photo.
+ */
+const FLASH_ORDER: FlashMode[] = ['off', 'on', 'auto'];
+const FLASH_UI: Record<FlashMode, { icon: keyof typeof Ionicons.glyphMap; label: string }> = {
+  off: { icon: 'flash-off', label: 'Off' },
+  on: { icon: 'flash', label: 'On' },
+  auto: { icon: 'flash-outline', label: 'Auto' },
+};
+let lastFlash: FlashMode = 'off';
+
 export function CameraCapture({
   onCapture,
   onClose,
@@ -38,6 +51,13 @@ export function CameraCapture({
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<FlashMode>(lastFlash);
+
+  const cycleFlash = () => {
+    const next = FLASH_ORDER[(FLASH_ORDER.indexOf(flash) + 1) % FLASH_ORDER.length];
+    lastFlash = next;
+    setFlash(next);
+  };
 
   useEffect(() => {
     if (permission && !permission.granted && permission.canAskAgain) {
@@ -115,11 +135,21 @@ export function CameraCapture({
 
   return (
     <View style={styles.fill}>
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" flash={flash} />
       <SafeAreaView style={styles.controls} pointerEvents="box-none">
         <View style={styles.topBar}>
           <Pressable onPress={onClose} hitSlop={16} style={styles.closeBtn}>
             <Ionicons name="close" size={28} color="#fff" />
+          </Pressable>
+          {/* Flash: Off -> On -> Auto. Highlighted while it can fire. */}
+          <Pressable
+            onPress={cycleFlash}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={`Flash ${FLASH_UI[flash].label}. Tap to change`}
+            style={({ pressed }) => [styles.flashBtn, flash !== 'off' && styles.flashBtnOn, pressed && { opacity: 0.8 }]}>
+            <Ionicons name={FLASH_UI[flash].icon} size={20} color={flash === 'off' ? '#fff' : '#1a1a1a'} />
+            <ThemedText style={[styles.flashText, flash !== 'off' && { color: '#1a1a1a' }]}>{FLASH_UI[flash].label}</ThemedText>
           </Pressable>
         </View>
         <View style={styles.bottomBar}>
@@ -166,7 +196,19 @@ const styles = StyleSheet.create({
   grantBtn: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
   textBtn: { padding: 8 },
   controls: { flex: 1, justifyContent: 'space-between' },
-  topBar: { flexDirection: 'row', padding: 16 },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 },
+  flashBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  /** Bright while the flash can fire, so it is obvious at a glance. */
+  flashBtnOn: { backgroundColor: '#FFD43B' },
+  flashText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   closeBtn: {
     width: 44,
     height: 44,
