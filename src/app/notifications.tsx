@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { SafeAreaView } from '@/components/safe-area-view';
@@ -58,9 +58,22 @@ export default function NotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    if (!user) return;
+    // No user yet (the session is still being restored): show the empty list
+    // instead of a spinner nothing will ever stop. Reloads once they arrive.
+    if (!user?._id) {
+      setItems((v) => v ?? []);
+      setRefreshing(false);
+      return;
+    }
     try {
-      const r = await api.listNotifications(user._id, 100);
+      // A request that never answers (bad signal, a server waking up) must not
+      // hold the screen on the spinner for ever: give up after 20 s and say so.
+      const r = await Promise.race([
+        api.listNotifications(user._id, 100),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Taking too long. Check your internet and pull down to retry.')), 20_000)
+        ),
+      ]);
       setItems(r.items);
       setError(null);
       // Seen now: clear the badge everywhere, and on the server.
@@ -76,11 +89,16 @@ export default function NotificationsScreen() {
     }
   }, [user]);
 
+  // On every return to the screen (fresh list), and once on mount as well: if
+  // the focus event does not reach this screen, it must still load.
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
   );
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const open = (n: AppNotification) => {
     const t = n.data?.type;
@@ -112,9 +130,21 @@ export default function NotificationsScreen() {
               />
             }>
             {error ? (
-              <ThemedText type="small" style={{ color: Brand.danger, marginBottom: Spacing.two }}>
-                {error}
-              </ThemedText>
+              <View style={styles.errorBox}>
+                <ThemedText type="small" style={{ color: Brand.danger, flex: 1 }}>
+                  {error}
+                </ThemedText>
+                <Pressable
+                  onPress={() => {
+                    setRefreshing(true);
+                    load();
+                  }}
+                  hitSlop={8}>
+                  <ThemedText type="smallBold" style={{ color: Brand.primary }}>
+                    Try again
+                  </ThemedText>
+                </Pressable>
+              </View>
             ) : null}
 
             {items.length === 0 && !error ? (
@@ -185,6 +215,16 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   body: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    padding: Spacing.three,
+    borderRadius: Radius.lg,
+    backgroundColor: Brand.dangerSurface,
+    marginTop: Spacing.three,
+    marginBottom: Spacing.two,
+  },
   group: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, marginTop: Spacing.three, marginBottom: Spacing.two },
   item: {
     flexDirection: 'row',
