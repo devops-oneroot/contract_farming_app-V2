@@ -555,13 +555,31 @@ export default function OnboardedScreen() {
                       </ThemedText>
                     </View>
                   )}
-                  <View style={{ flex: 1 }}>
-                    <ThemedText type="smallBold" numberOfLines={1}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <ThemedText type="smallBold" numberOfLines={1} style={styles.farmerName}>
                       {f.name}
                     </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                      {f.mobile}
-                    </ThemedText>
+                    <View style={styles.metaRow}>
+                      <Ionicons name="call-outline" size={11} color={theme.textSecondary} />
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={styles.metaText}>
+                        {f.mobile}
+                      </ThemedText>
+                      {f.farmAddress?.village || f.farmAddress?.taluk ? (
+                        <>
+                          <ThemedText type="small" themeColor="textSecondary" style={styles.metaText}>
+                            ·
+                          </ThemedText>
+                          <Ionicons name="location-outline" size={11} color={theme.textSecondary} />
+                          <ThemedText
+                            type="small"
+                            themeColor="textSecondary"
+                            numberOfLines={1}
+                            style={[styles.metaText, { flexShrink: 1 }]}>
+                            {f.farmAddress?.village || f.farmAddress?.taluk}
+                          </ThemedText>
+                        </>
+                      ) : null}
+                    </View>
                     {/* Did this agronomist register them, or were they handed
                         over? The date above is the farmer's record date, so it
                         only means "onboarded on" when this agronomist created
@@ -575,6 +593,7 @@ export default function OnboardedScreen() {
                       const mine = !!by && by === user?._id;
                       const who = onboarderName(f);
                       return (
+                        <View style={styles.chipRow}>
                         <View
                           style={[
                             styles.originChip,
@@ -599,29 +618,21 @@ export default function OnboardedScreen() {
                             {mine ? 'Onboarded by you' : who ? `By ${who}` : 'From dashboard'}
                           </ThemedText>
                         </View>
+                        <ThemedText type="small" themeColor="textSecondary" style={styles.stampText} numberOfLines={1}>
+                          {fmtStamp(f.createdAt)}
+                        </ThemedText>
+                        </View>
                       );
                     })()}
                   </View>
-                  {/* Everything on the right edge in one column: the stamp
-                      above, the buttons below. It costs no height — the call
-                      button and the line of text together are no taller than
-                      the three lines of detail beside them — and it keeps the
-                      dates in a straight column down the list, which is what
-                      makes them scannable. */}
-                  <View style={styles.rightCol}>
-                    <ThemedText type="small" themeColor="textSecondary" style={styles.stampText}>
-                      {fmtStamp(f.createdAt)}
-                    </ThemedText>
-                    <View style={styles.actions}>
-                      <Pressable
-                        onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
-                        hitSlop={8}
-                        style={styles.callBtn}>
-                        <Ionicons name="call" size={16} color="#fff" />
-                      </Pressable>
-                      <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
-                    </View>
-                  </View>
+                  {/* Call at the very end of the row; a tap anywhere else opens the farmer. */}
+                  <Pressable
+                    onPress={() => callFarmer(user, { _id: f._id, name: f.name, mobile: f.mobile })}
+                    hitSlop={8}
+                    accessibilityLabel={`Call ${f.name}`}
+                    style={({ pressed }) => [styles.callBtnLg, pressed && { opacity: 0.8 }]}>
+                    <Ionicons name="call" size={18} color="#fff" />
+                  </Pressable>
                 </View>
               </Pressable>
             ))
@@ -1056,7 +1067,6 @@ const styles = StyleSheet.create({
     gap: 4,
     alignSelf: 'flex-start',
     maxWidth: '100%',
-    marginTop: 3,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: Spacing.four,
@@ -1069,6 +1079,20 @@ const styles = StyleSheet.create({
     backgroundColor: Brand.secondarySurface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  farmerName: { fontSize: 15 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, minWidth: 0 },
+  metaText: { fontSize: 12 },
+  chipRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: 4, flexWrap: 'wrap' },
+  /** The farmer row's call button: the one action, at the end of the row. */
+  callBtnLg: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...CardShadow,
   },
   callBtn: {
     width: 34,

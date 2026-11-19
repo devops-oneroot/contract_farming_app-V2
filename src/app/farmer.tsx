@@ -3,9 +3,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
+  ScrollView,
   Alert,
   FlatList,
   Linking,
@@ -22,6 +24,7 @@ import { ScreenHeader } from '@/components/screen-header';
 import { CameraCapture } from '@/components/camera-capture';
 import { ProfilePhotoPopup } from '@/components/profile-photo-popup';
 import { TappablePhoto } from '@/components/tappable-photo';
+import { usePaymentProof } from '@/components/payment-proof';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Radius, Spacing } from '@/constants/theme';
@@ -95,6 +98,22 @@ export default function FarmerScreen() {
   const [visits, setVisits] = useState<Visit[]>([]);
   // Which sale line we are taking the follow-up after-photo for.
   const [afterFor, setAfterFor] = useState<{ saleId: string; index: number } | null>(null);
+  // The sale open in the detail view, by id so it shows the latest copy.
+  const [openSaleId, setOpenSaleId] = useState<string | null>(null);
+  const openSale = openSaleId ? sales.find((x) => x._id === openSaleId) ?? null : null;
+  // Payment proof, added once from the sale's detail view.
+  const proof = usePaymentProof();
+  const mergeSale = (saved: ProductSale) =>
+    setSales((ss) => ss.map((x) => (x._id === saved._id ? { ...x, ...saved, agronomist: x.agronomist } : x)));
+  // Android back closes the sale view before leaving the farmer.
+  useEffect(() => {
+    if (!openSaleId) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setOpenSaleId(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [openSaleId]);
   const [uploadingAfter, setUploadingAfter] = useState(false);
 
   // Setting the return date straight from a logged visit. `followUpFor` is the
@@ -607,132 +626,61 @@ export default function FarmerScreen() {
               {sales.length > 0 ? (
                 <View style={{ marginTop: Spacing.four }}>
                   <ThemedText type="smallBold" style={{ marginBottom: Spacing.two }}>
-                    Products given ({sales.length})
+                    Products sold ({sales.length})
                   </ThemedText>
-                  {sales.map((s) => (
-                    <ThemedView key={s._id} type="card" style={styles.saleCard}>
-                      <View style={styles.saleTop}>
-                        <View style={{ flex: 1 }}>
-                          <ThemedText type="smallBold">
-                            {s.items.length} product{s.items.length > 1 ? 's' : ''}
-                            {s.cropName ? ` · ${s.cropName}` : ''}
-                          </ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            {fmt(new Date(s.soldAt))}
-                            {typeof s.agronomist === 'object' && s.agronomist?.name
-                              ? ` · ${s.agronomist.name}`
-                              : s.agronomistName
-                                ? ` · ${s.agronomistName}`
-                                : ''}
-                          </ThemedText>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <ThemedText type="smallBold" style={{ color: GREEN }}>
-                            {money(s.total)}
-                          </ThemedText>
-                          {/* The bill for this one sale. Opened rather than
-                              fetched: the phone's browser downloads it and can
-                              then share it straight to the farmer. */}
-                          <Pressable
-                            onPress={() =>
-                              Linking.openURL(api.saleInvoicePdfUrl(s._id)).catch(() =>
-                                Alert.alert('Could not open', 'Please try again.')
-                              )
-                            }
-                            hitSlop={8}
-                            style={({ pressed }) => [styles.billBtn, pressed && { opacity: 0.7 }]}>
-                            <Ionicons name="download-outline" size={12} color={GREEN} />
-                            <ThemedText type="small" style={styles.billBtnText}>
-                              Bill
+                  {sales.map((s) => {
+                    const proofed = !!s.paymentProofUrl;
+                    return (
+                      <Pressable
+                        key={s._id}
+                        onPress={() => setOpenSaleId(s._id)}
+                        accessibilityLabel={`Open the sale of ${fmt(new Date(s.soldAt))}`}
+                        style={({ pressed }) => [pressed && { opacity: 0.8 }]}>
+                        <ThemedView type="card" style={styles.saleRow}>
+                          <View style={styles.saleRowIcon}>
+                            <Ionicons name="bag-handle-outline" size={18} color={GREEN} />
+                          </View>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <ThemedText type="smallBold" numberOfLines={1}>
+                              {s.items.map((it) => it.name).join(', ')}
                             </ThemedText>
-                          </Pressable>
-                        </View>
-                      </View>
-
-                      {/* Before at handover; after once the waiting period is up. */}
-                      {s.items.map((it, i) => {
-                        const dueAt = s.afterDueAt ? new Date(s.afterDueAt) : null;
-                        const daysLeft = dueAt
-                          ? Math.ceil((dueAt.getTime() - Date.now()) / DAY_MS)
-                          : 0;
-                        const due = !dueAt || daysLeft <= 0;
-                        return (
-                          <View key={it.product} style={styles.saleItem}>
-                            <View style={styles.saleItemHead}>
-                              <ThemedText type="small" style={{ flex: 1 }} numberOfLines={1}>
-                                {it.name}
-                              </ThemedText>
-                              <ThemedText type="small" themeColor="textSecondary">
-                                {it.qty} × {money(it.unitPrice)} = {money(it.lineTotal)}
-                              </ThemedText>
-                            </View>
-                            <View style={styles.salePhotos}>
-                              <View style={{ flex: 1 }}>
-                                {it.beforePhotoUrl ? (
-                                  <TappablePhoto
-                                    uri={it.beforePhotoUrl}
-                                    group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
-                                    index={0}
-                                    style={styles.salePhoto}
-                                    caption={`${it.name} — before`}
-                                  />
-                                ) : (
-                                  <View style={[styles.salePhoto, styles.salePhotoEmpty]} />
-                                )}
-                                <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
-                                  Before
-                                </ThemedText>
-                              </View>
-
-                              <View style={{ flex: 1 }}>
-                                {it.afterPhotoUrl ? (
-                                  <TappablePhoto
-                                    uri={it.afterPhotoUrl}
-                                    group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
-                                    index={it.beforePhotoUrl ? 1 : 0}
-                                    style={styles.salePhoto}
-                                    caption={`${it.name} — after`}
-                                  />
-                                ) : due ? (
-                                  // The wait is over — one tap to capture it.
-                                  <Pressable
-                                    onPress={() => setAfterFor({ saleId: s._id, index: i })}
-                                    disabled={uploadingAfter}
-                                    style={[styles.salePhoto, styles.afterBtn]}>
-                                    {uploadingAfter ? (
-                                      <ActivityIndicator color={GREEN} />
-                                    ) : (
-                                      <>
-                                        <Ionicons name="camera-outline" size={20} color={GREEN} />
-                                        <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
-                                          Take now
-                                        </ThemedText>
-                                      </>
-                                    )}
-                                  </Pressable>
-                                ) : (
-                                  <View style={[styles.salePhoto, styles.afterWait]}>
-                                    <Ionicons name="time-outline" size={18} color={AMBER} />
-                                    <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
-                                      in {daysLeft}d
-                                    </ThemedText>
-                                  </View>
-                                )}
-                                <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
-                                  After
+                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                              {fmt(new Date(s.soldAt))}
+                              {s.invoiceNo ? ` · ${s.invoiceNo}` : ''}
+                              {s.cropName ? ` · ${s.cropName}` : ''}
+                            </ThemedText>
+                            <View style={styles.saleChips}>
+                              {s.paymentMethod ? (
+                                <View style={styles.payChip}>
+                                  <ThemedText type="small" style={styles.payChipText}>
+                                    {s.paymentMethod === 'upi' ? 'UPI' : 'Cash'}
+                                  </ThemedText>
+                                </View>
+                              ) : null}
+                              <View style={[styles.proofChip, proofed ? styles.proofChipDone : styles.proofChipDue]}>
+                                <Ionicons
+                                  name={proofed ? 'checkmark-circle' : 'alert-circle-outline'}
+                                  size={11}
+                                  color={proofed ? GREEN : AMBER}
+                                />
+                                <ThemedText type="small" style={[styles.proofChipText, { color: proofed ? GREEN : AMBER }]}>
+                                  {proofed ? 'Proof added' : 'Proof pending'}
                                 </ThemedText>
                               </View>
                             </View>
                           </View>
-                        );
-                      })}
-                      {s.notes ? (
-                        <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
-                          {s.notes}
-                        </ThemedText>
-                      ) : null}
-                    </ThemedView>
-                  ))}
+                          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                            <ThemedText type="smallBold" style={{ color: GREEN }}>
+                              {money(s.total)}
+                            </ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                              {s.items.length} item{s.items.length > 1 ? 's' : ''}
+                            </ThemedText>
+                          </View>
+                        </ThemedView>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               ) : null}
 
@@ -868,7 +816,243 @@ export default function FarmerScreen() {
         )}
       </SafeAreaView>
 
+      {openSale ? (
+        <View style={[styles.saleSheet, { backgroundColor: theme.background }]}>
+          <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+            <View style={styles.saleSheetHead}>
+              <Pressable onPress={() => setOpenSaleId(null)} hitSlop={12} accessibilityLabel="Back">
+                <Ionicons name="arrow-back" size={22} color={theme.text} />
+              </Pressable>
+              <View style={{ flex: 1 }}>
+                <ThemedText type="smallBold" style={{ fontSize: 16 }}>
+                  Sale details
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {openSale.invoiceNo ? `Bill ${openSale.invoiceNo}` : 'No bill number'}
+                </ThemedText>
+              </View>
+            </View>
+            <ScrollView contentContainerStyle={styles.saleSheetBody}>
+              {(() => {
+                const s = openSale;
+                const itemsTotal = s.items.reduce((n, it) => n + (it.lineTotal ?? 0), 0);
+                const who =
+                  typeof s.agronomist === 'object' && s.agronomist?.name ? s.agronomist.name : s.agronomistName;
+                const proofed = !!s.paymentProofUrl;
+                return (
+                  <>
+                    {/* The summary: what it came to, and how it was paid. */}
+                    <ThemedView type="card" style={styles.detailCard}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        Total
+                      </ThemedText>
+                      <ThemedText style={styles.detailTotal}>{money(s.total)}</ThemedText>
+                      <View style={styles.detailGrid}>
+                        {[
+                          { icon: 'calendar-outline' as const, label: 'Sold on', value: fmt(new Date(s.soldAt)) },
+                          { icon: 'person-outline' as const, label: 'Sold by', value: who || '—' },
+                          { icon: 'leaf-outline' as const, label: 'Crop', value: s.cropName || '—' },
+                          {
+                            icon: 'wallet-outline' as const,
+                            label: 'Paid by',
+                            value: s.paymentMethod === 'upi' ? 'UPI' : s.paymentMethod === 'cash' ? 'Cash' : '—',
+                          },
+                        ].map((row) => (
+                          <View key={row.label} style={styles.detailCell}>
+                            <Ionicons name={row.icon} size={14} color={theme.textSecondary} />
+                            <View style={{ flex: 1 }}>
+                              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                                {row.label}
+                              </ThemedText>
+                              <ThemedText type="small" style={{ fontWeight: '700' }} numberOfLines={1}>
+                                {row.value}
+                              </ThemedText>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                      {/* How the total was reached, when anything changed it. */}
+                      {(s.discountAmount ?? 0) > 0 || (s.otherCharges ?? 0) > 0 ? (
+                        <View style={styles.detailSums}>
+                          <View style={styles.sumRow}>
+                            <ThemedText type="small" themeColor="textSecondary">Products</ThemedText>
+                            <ThemedText type="small">{money(itemsTotal)}</ThemedText>
+                          </View>
+                          {(s.discountAmount ?? 0) > 0 ? (
+                            <View style={styles.sumRow}>
+                              <ThemedText type="small" themeColor="textSecondary">Discount</ThemedText>
+                              <ThemedText type="small" style={{ color: Brand.danger }}>− {money(s.discountAmount ?? 0)}</ThemedText>
+                            </View>
+                          ) : null}
+                          {(s.otherCharges ?? 0) > 0 ? (
+                            <View style={styles.sumRow}>
+                              <ThemedText type="small" themeColor="textSecondary">Other charges</ThemedText>
+                              <ThemedText type="small">+ {money(s.otherCharges ?? 0)}</ThemedText>
+                            </View>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </ThemedView>
+
+                    {/* Proof of payment: added once, then fixed. */}
+                    <ThemedView type="card" style={styles.detailCard}>
+                      <View style={styles.detailCardHead}>
+                        <Ionicons name="receipt-outline" size={16} color={proofed ? GREEN : AMBER} />
+                        <ThemedText type="smallBold" style={{ flex: 1 }}>
+                          Payment proof
+                        </ThemedText>
+                        <View style={[styles.proofChip, proofed ? styles.proofChipDone : styles.proofChipDue]}>
+                          <ThemedText type="small" style={[styles.proofChipText, { color: proofed ? GREEN : AMBER }]}>
+                            {proofed ? 'Added' : 'Pending'}
+                          </ThemedText>
+                        </View>
+                      </View>
+                      {proofed ? (
+                        <>
+                          <TappablePhoto uri={s.paymentProofUrl!} style={styles.proofPhoto} contentFit="cover" caption="Payment proof" />
+                          <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+                            {s.paymentProofAt ? `Added ${fmt(new Date(s.paymentProofAt))} · ` : ''}Tap the photo to view it full size.
+                          </ThemedText>
+                        </>
+                      ) : (
+                        <>
+                          <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: Spacing.three }}>
+                            Add the UPI screenshot or a photo of the receipt. You can check and change the photo before
+                            uploading; once uploaded it cannot be changed.
+                          </ThemedText>
+                          <Pressable
+                            onPress={() => proof.add(s._id, (saved) => mergeSale(saved))}
+                            style={({ pressed }) => [styles.proofAddBtn, pressed && { opacity: 0.85 }]}>
+                            <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+                            <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                              Add payment proof
+                            </ThemedText>
+                          </Pressable>
+                        </>
+                      )}
+                    </ThemedView>
+
+                    {/* Each product, with its before and after photos. */}
+                    <ThemedView type="card" style={styles.detailCard}>
+                      <View style={styles.detailCardHead}>
+                        <Ionicons name="cube-outline" size={16} color={GREEN} />
+                        <ThemedText type="smallBold" style={{ flex: 1 }}>
+                          Products ({s.items.length})
+                        </ThemedText>
+                      </View>
+                              {/* Before at handover; after once the waiting period is up. */}
+                              {s.items.map((it, i) => {
+                                const dueAt = s.afterDueAt ? new Date(s.afterDueAt) : null;
+                                const daysLeft = dueAt
+                                  ? Math.ceil((dueAt.getTime() - Date.now()) / DAY_MS)
+                                  : 0;
+                                const due = !dueAt || daysLeft <= 0;
+                                return (
+                                  <View key={it.product} style={styles.saleItem}>
+                                    <View style={styles.saleItemHead}>
+                                      <ThemedText type="small" style={{ flex: 1 }} numberOfLines={1}>
+                                        {it.name}
+                                      </ThemedText>
+                                      <ThemedText type="small" themeColor="textSecondary">
+                                        {it.qty} × {money(it.unitPrice)} = {money(it.lineTotal)}
+                                      </ThemedText>
+                                    </View>
+                                    <View style={styles.salePhotos}>
+                                      <View style={{ flex: 1 }}>
+                                        {it.beforePhotoUrl ? (
+                                          <TappablePhoto
+                                            uri={it.beforePhotoUrl}
+                                            group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
+                                            index={0}
+                                            style={styles.salePhoto}
+                                            caption={`${it.name} — before`}
+                                          />
+                                        ) : (
+                                          <View style={[styles.salePhoto, styles.salePhotoEmpty]} />
+                                        )}
+                                        <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
+                                          Before
+                                        </ThemedText>
+                                      </View>
+        
+                                      <View style={{ flex: 1 }}>
+                                        {it.afterPhotoUrl ? (
+                                          <TappablePhoto
+                                            uri={it.afterPhotoUrl}
+                                            group={[it.beforePhotoUrl, it.afterPhotoUrl].filter(Boolean)}
+                                            index={it.beforePhotoUrl ? 1 : 0}
+                                            style={styles.salePhoto}
+                                            caption={`${it.name} — after`}
+                                          />
+                                        ) : due ? (
+                                          // The wait is over — one tap to capture it.
+                                          <Pressable
+                                            onPress={() => setAfterFor({ saleId: s._id, index: i })}
+                                            disabled={uploadingAfter}
+                                            style={[styles.salePhoto, styles.afterBtn]}>
+                                            {uploadingAfter ? (
+                                              <ActivityIndicator color={GREEN} />
+                                            ) : (
+                                              <>
+                                                <Ionicons name="camera-outline" size={20} color={GREEN} />
+                                                <ThemedText type="small" style={{ color: GREEN, fontWeight: '700' }}>
+                                                  Take now
+                                                </ThemedText>
+                                              </>
+                                            )}
+                                          </Pressable>
+                                        ) : (
+                                          <View style={[styles.salePhoto, styles.afterWait]}>
+                                            <Ionicons name="time-outline" size={18} color={AMBER} />
+                                            <ThemedText type="small" style={{ color: AMBER, fontWeight: '700' }}>
+                                              in {daysLeft}d
+                                            </ThemedText>
+                                          </View>
+                                        )}
+                                        <ThemedText type="small" themeColor="textSecondary" style={styles.salePhotoLabel}>
+                                          After
+                                        </ThemedText>
+                                      </View>
+                                    </View>
+                                  </View>
+                                );
+                              })}
+                            </ThemedView>
+
+                    {s.notes ? (
+                      <ThemedView type="card" style={styles.detailCard}>
+                        <View style={styles.detailCardHead}>
+                          <Ionicons name="document-text-outline" size={16} color={theme.textSecondary} />
+                          <ThemedText type="smallBold">Notes</ThemedText>
+                        </View>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {s.notes}
+                        </ThemedText>
+                      </ThemedView>
+                    ) : null}
+
+                    <Pressable
+                      onPress={() =>
+                        Linking.openURL(api.saleInvoicePdfUrl(s._id)).catch(() =>
+                          Alert.alert('Could not open', 'Please try again.')
+                        )
+                      }
+                      style={({ pressed }) => [styles.billWide, pressed && { opacity: 0.85 }]}>
+                      <Ionicons name="download-outline" size={18} color={GREEN} />
+                      <ThemedText type="smallBold" style={{ color: GREEN }}>
+                        Download bill
+                      </ThemedText>
+                    </Pressable>
+                  </>
+                );
+              })()}
+            </ScrollView>
+          </SafeAreaView>
+        </View>
+      ) : null}
+
       {afterFor && <CameraCapture onCapture={captureAfter} onClose={() => setAfterFor(null)} />}
+      {proof.overlay}
 
       <ProfilePhotoPopup
         person={photoOpen && farmerPhoto ? { name: farmerName || name, mobile: farmerMobile, photoUrl: farmerPhoto } : null}
@@ -1120,6 +1304,73 @@ const styles = StyleSheet.create({
   geoIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#FF7F00', alignItems: 'center', justifyContent: 'center' },
   empty: { padding: Spacing.four, borderRadius: Spacing.three, alignItems: 'center' },
   saleCard: { padding: Spacing.three, borderRadius: Spacing.three, marginBottom: Spacing.two },
+  /** One sale in the farmer's list: what, when, paid how, proof or not, total. */
+  saleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+    marginBottom: Spacing.two,
+  },
+  saleRowIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Brand.primarySurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saleChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  payChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: 'rgba(127,127,127,0.14)' },
+  payChipText: { fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  proofChip: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10 },
+  proofChipDone: { backgroundColor: Brand.primarySurface },
+  proofChipDue: { backgroundColor: `${AMBER}1F` },
+  proofChipText: { fontSize: 10, fontWeight: '800' },
+  /** The sale detail view, over the whole farmer page. */
+  saleSheet: { ...StyleSheet.absoluteFillObject, zIndex: 15, elevation: 15 },
+  saleSheetHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.three,
+  },
+  saleSheetBody: { paddingHorizontal: Spacing.four, paddingBottom: Spacing.six, gap: Spacing.three },
+  detailCard: { padding: Spacing.four, borderRadius: Spacing.four },
+  detailCardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: Spacing.two },
+  detailTotal: { fontSize: 30, lineHeight: 38, fontWeight: '800', color: GREEN },
+  detailGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: Spacing.three, rowGap: Spacing.three },
+  detailCell: { width: '50%', flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two, paddingRight: Spacing.two },
+  detailSums: {
+    marginTop: Spacing.three,
+    paddingTop: Spacing.three,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(127,127,127,0.3)',
+    gap: 6,
+  },
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  proofPhoto: { width: '100%', height: 220, borderRadius: Spacing.three, marginTop: Spacing.one },
+  proofAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    height: 48,
+    borderRadius: Spacing.three,
+    backgroundColor: AMBER,
+  },
+  billWide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    height: 48,
+    borderRadius: Spacing.three,
+    borderWidth: 1.5,
+    borderColor: GREEN,
+  },
   /** Download this sale's bill, under its total where the money already is. */
   billBtn: {
     flexDirection: 'row',

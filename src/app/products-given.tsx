@@ -356,7 +356,7 @@ export default function ProductsGivenScreen() {
           <View style={styles.cardFoot}>
             {/* Proof of payment: a UPI screenshot or receipt, camera or
                 gallery. Its thumbnail once added (tap to view); the button
-                adds one, or replaces it. */}
+                adds it once. */}
             {s.paymentProofUrl ? (
               <View style={styles.proofDone}>
                 <TappablePhoto uri={s.paymentProofUrl} style={styles.proofThumb} caption="Payment proof" />
@@ -366,27 +366,30 @@ export default function ProductsGivenScreen() {
                 </ThemedText>
               </View>
             ) : null}
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation();
-                proof.add(s._id, (saved) =>
-                  setSales((list) =>
-                    list.map((x) =>
-                      x._id === s._id
-                        ? { ...x, paymentProofUrl: saved.paymentProofUrl, paymentProofAt: saved.paymentProofAt }
-                        : x
+            {/* Added once: the button is only there until the proof is in. */}
+            {!s.paymentProofUrl ? (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation();
+                  proof.add(s._id, (saved) =>
+                    setSales((list) =>
+                      list.map((x) =>
+                        x._id === s._id
+                          ? { ...x, paymentProofUrl: saved.paymentProofUrl, paymentProofAt: saved.paymentProofAt }
+                          : x
+                      )
                     )
-                  )
-                );
-              }}
-              hitSlop={8}
-              accessibilityLabel={`${s.paymentProofUrl ? 'Replace' : 'Add'} the payment proof for ${buyer.name}`}
-              style={({ pressed }) => [styles.billBtn, !s.paymentProofUrl && styles.proofBtn, pressed && { opacity: 0.7 }]}>
-              <Ionicons name={s.paymentProofUrl ? 'repeat-outline' : 'receipt-outline'} size={13} color={s.paymentProofUrl ? GREEN : AMBER} />
-              <ThemedText type="small" style={[styles.billBtnText, !s.paymentProofUrl && { color: AMBER }]}>
-                {s.paymentProofUrl ? 'Replace' : 'Add payment proof'}
-              </ThemedText>
-            </Pressable>
+                  );
+                }}
+                hitSlop={8}
+                accessibilityLabel={`Add the payment proof for ${buyer.name}`}
+                style={({ pressed }) => [styles.billBtn, styles.proofBtn, pressed && { opacity: 0.7 }]}>
+                <Ionicons name="receipt-outline" size={13} color={AMBER} />
+                <ThemedText type="small" style={[styles.billBtnText, { color: AMBER }]}>
+                  Add payment proof
+                </ThemedText>
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={(e) => {
                 e.stopPropagation();

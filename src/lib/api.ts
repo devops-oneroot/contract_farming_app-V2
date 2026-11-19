@@ -490,6 +490,8 @@ export type PaymentMethod = 'cash' | 'upi';
 export type ProductSale = {
   /** How the buyer paid; null on sales recorded before the app asked. */
   paymentMethod?: PaymentMethod | null;
+  /** The bill's own number, e.g. ENP-CHM145; blank on sales from before numbering. */
+  invoiceNo?: string;
   /** Proof of payment added after the sale (UPI screenshot / receipt); '' until one is. */
   paymentProofUrl?: string;
   paymentProofAt?: string | null;
