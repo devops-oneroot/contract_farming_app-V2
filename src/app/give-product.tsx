@@ -26,6 +26,7 @@ import { TextInput } from '@/components/exo-text';
 import { SafeAreaView } from '@/components/safe-area-view';
 
 import { ScreenHeader } from '@/components/screen-header';
+import { usePaymentProof } from '@/components/payment-proof';
 import { CameraCapture } from '@/components/camera-capture';
 import { TappablePhoto } from '@/components/tappable-photo';
 import { ThemedText } from '@/components/themed-text';
@@ -235,6 +236,8 @@ export default function GiveProductScreen() {
   const scheme = useColorScheme();
   const router = useRouter();
   const posthog = usePostHog();
+  // Payment proof after the sale: camera or gallery.
+  const proof = usePaymentProof();
   const { user } = useAuth();
   const { height } = useWindowDimensions();
   const width = useContentWidth();
@@ -732,7 +735,23 @@ export default function GiveProductScreen() {
       // Offered here because this is the moment the farmer is still standing
       // there — the bill is also on their page afterwards, but handing it over
       // now is what it is for.
-      Alert.alert('Sale recorded ✓', `${inCart.length} product(s) · ${money(total)}`, [
+      // Bill, then leave - from here or after the payment proof.
+      const finish = () =>
+        Alert.alert('Sale recorded ✓', `${inCart.length} product(s) · ${money(total)}`, [
+          {
+            text: 'Download bill',
+            onPress: () => {
+              Linking.openURL(api.saleInvoicePdfUrl(saved._id)).catch(() => {});
+              router.back();
+            },
+          },
+          { text: 'Done', onPress: () => router.back() },
+        ]);
+      // Proof of payment (a UPI screenshot, a receipt) is asked for while the
+      // buyer is still there; skipping it is fine, it can be added later from
+      // Products Given.
+      Alert.alert('Sale recorded ✓', `${inCart.length} product(s) · ${money(total)}\nAdd the payment proof now?`, [
+        { text: 'Add payment proof', onPress: () => proof.add(saved._id, () => finish(), () => finish()) },
         {
           text: 'Download bill',
           onPress: () => {
@@ -1822,6 +1841,7 @@ export default function GiveProductScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      {proof.overlay}
     </View>
   );
 }

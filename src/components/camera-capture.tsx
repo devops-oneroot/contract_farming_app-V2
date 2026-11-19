@@ -14,6 +14,8 @@ import { ThemedText } from '@/components/themed-text';
  * Camera only - there is no gallery pick. Every photo in the app is proof of
  * something seen there and then (a visit, a sale, a disease, the day's start
  * and end), and a picture chosen from the roll proves nothing.
+ * (The one exception, payment proof after a sale, offers the gallery itself -
+ * a UPI screenshot only exists there. See components/payment-proof.tsx.)
  */
 /**
  * The flash, cycled Off -> On -> Auto from the camera's top bar. Kept between

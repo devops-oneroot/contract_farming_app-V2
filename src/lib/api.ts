@@ -490,6 +490,9 @@ export type PaymentMethod = 'cash' | 'upi';
 export type ProductSale = {
   /** How the buyer paid; null on sales recorded before the app asked. */
   paymentMethod?: PaymentMethod | null;
+  /** Proof of payment added after the sale (UPI screenshot / receipt); '' until one is. */
+  paymentProofUrl?: string;
+  paymentProofAt?: string | null;
   /** Set instead of `farmer` when an FPO bought. Snapshots, like the farmer's. */
   fpo?: string | null;
   fpoName?: string;
@@ -1806,6 +1809,23 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/product-sales`, { method: 'POST', body: form, headers: authHeaders() });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not save the sale');
+    return data as ProductSale;
+  },
+
+  /**
+   * Proof of payment for a sale already recorded - a UPI screenshot or a
+   * receipt photo, from the camera or the gallery. Replaces any earlier one.
+   */
+  addPaymentProof: async (saleId: string, photo: { uri: string; name: string; type: string }): Promise<ProductSale> => {
+    const form = new FormData();
+    form.append('photo', photo as any);
+    const res = await fetch(`${BASE_URL}/api/product-sales/${encodeURIComponent(saleId)}/payment-proof`, {
+      method: 'POST',
+      body: form,
+      headers: authHeaders(),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save the payment proof');
     return data as ProductSale;
   },
 

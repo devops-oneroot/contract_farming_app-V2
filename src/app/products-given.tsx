@@ -18,6 +18,7 @@ import { SafeAreaView } from '@/components/safe-area-view';
 import { ScreenHeader } from '@/components/screen-header';
 import { FilterPicker } from '@/components/filter-picker';
 import { TappablePhoto } from '@/components/tappable-photo';
+import { usePaymentProof } from '@/components/payment-proof';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Brand, Radius, Spacing } from '@/constants/theme';
@@ -85,6 +86,8 @@ export default function ProductsGivenScreen() {
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
 
   const [sales, setSales] = useState<ProductSale[]>([]);
+  // Payment proof for a sale in the list: camera or gallery.
+  const proof = usePaymentProof();
   // Address and photo live on the farmer, not the sale, so the roster is
   // fetched once and joined by id — never one request per row.
   const [farmers, setFarmers] = useState<Record<string, Farmer>>({});
@@ -351,6 +354,39 @@ export default function ProductsGivenScreen() {
               meant for the bill: a nested touchable claims the responder, and
               the whole card is otherwise a link to the farmer's page. */}
           <View style={styles.cardFoot}>
+            {/* Proof of payment: a UPI screenshot or receipt, camera or
+                gallery. Its thumbnail once added (tap to view); the button
+                adds one, or replaces it. */}
+            {s.paymentProofUrl ? (
+              <View style={styles.proofDone}>
+                <TappablePhoto uri={s.paymentProofUrl} style={styles.proofThumb} caption="Payment proof" />
+                <Ionicons name="checkmark-circle" size={13} color={GREEN} />
+                <ThemedText type="small" style={styles.billBtnText}>
+                  Paid proof
+                </ThemedText>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                proof.add(s._id, (saved) =>
+                  setSales((list) =>
+                    list.map((x) =>
+                      x._id === s._id
+                        ? { ...x, paymentProofUrl: saved.paymentProofUrl, paymentProofAt: saved.paymentProofAt }
+                        : x
+                    )
+                  )
+                );
+              }}
+              hitSlop={8}
+              accessibilityLabel={`${s.paymentProofUrl ? 'Replace' : 'Add'} the payment proof for ${buyer.name}`}
+              style={({ pressed }) => [styles.billBtn, !s.paymentProofUrl && styles.proofBtn, pressed && { opacity: 0.7 }]}>
+              <Ionicons name={s.paymentProofUrl ? 'repeat-outline' : 'receipt-outline'} size={13} color={s.paymentProofUrl ? GREEN : AMBER} />
+              <ThemedText type="small" style={[styles.billBtnText, !s.paymentProofUrl && { color: AMBER }]}>
+                {s.paymentProofUrl ? 'Replace' : 'Add payment proof'}
+              </ThemedText>
+            </Pressable>
             <Pressable
               onPress={(e) => {
                 e.stopPropagation();
@@ -631,6 +667,7 @@ export default function ProductsGivenScreen() {
         onSelect={setCrop}
         onClose={() => setPicking(null)}
       />
+      {proof.overlay}
     </View>
   );
 }
@@ -728,7 +765,18 @@ const styles = StyleSheet.create({
   thumb: { width: 24, height: 24, borderRadius: Spacing.half, backgroundColor: '#d8d8d8' },
   thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
   dueNote: { color: AMBER, fontWeight: '700', marginTop: Spacing.two, fontSize: 11 },
-  cardFoot: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: Spacing.two },
+  cardFoot: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: Spacing.two,
+    marginTop: Spacing.two,
+  },
+  proofDone: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 'auto' },
+  proofThumb: { width: 28, height: 28, borderRadius: 6 },
+  /** Amber while no proof is attached: something still to do. */
+  proofBtn: { borderColor: `${AMBER}66`, backgroundColor: `${AMBER}14` },
   billBtn: {
     flexDirection: 'row',
     alignItems: 'center',
