@@ -778,6 +778,19 @@ export default function FarmVisitsScreen() {
                 {[f.mobile, fmtAdded(f.createdAt)].filter(Boolean).join('  ·  ')}
               </ThemedText>
             ) : null}
+            {/* Who handed this farmer over: the office, or a telecaller's
+                follow-up - shown even on a farmer this agent onboarded, since
+                the visit was still asked for by someone else. Not when they
+                took the farmer on themselves. Farmers assigned before this was
+                recorded have no name, and keep just the tag above. */}
+            {f.assignedByName && f.assignedById !== user?._id ? (
+              <View style={styles.assignedByRow}>
+                <Ionicons name="briefcase-outline" size={11} color={Brand.secondary} />
+                <ThemedText type="small" numberOfLines={1} style={styles.assignedByText}>
+                  {`Assigned by ${f.assignedByName}${f.assignedAt ? `  ·  ${fmtAdded(f.assignedAt)}` : ''}`}
+                </ThemedText>
+              </View>
+            ) : null}
             <ThemedText
               type="small"
               numberOfLines={1}
@@ -1565,6 +1578,8 @@ const styles = StyleSheet.create({
   // Tighter than the default `small` leading, so a third line fits the card
   // without it growing much taller.
   rowMobile: { fontSize: 13, lineHeight: 17 },
+  assignedByRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  assignedByText: { flexShrink: 1, fontSize: 12, lineHeight: 16, color: Brand.secondary, fontWeight: '600' },
   rowThumb: { width: 44, height: 44, borderRadius: Spacing.two },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   detailSheet: {

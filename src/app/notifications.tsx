@@ -18,6 +18,8 @@ const KIND: Record<string, { icon: keyof typeof Ionicons.glyphMap; tint: string;
   'disease-report': { icon: 'bug', tint: Brand.danger, bg: Brand.dangerSurface },
   'disease-reply': { icon: 'chatbubbles', tint: Brand.secondary, bg: Brand.secondarySurface },
   'product-photo': { icon: 'leaf', tint: Brand.primary, bg: Brand.primarySurface },
+  // A telecaller's follow-up handed to this field executive.
+  'follow-up-assigned': { icon: 'briefcase', tint: Brand.secondary, bg: Brand.secondarySurface },
 };
 const FALLBACK = { icon: 'notifications' as const, tint: Brand.primary, bg: Brand.primarySurface };
 
@@ -103,6 +105,8 @@ export default function NotificationsScreen() {
   const open = (n: AppNotification) => {
     const t = n.data?.type;
     if (t === 'disease-report' || t === 'disease-reply') router.push('/disease-reports' as never);
+    // A follow-up visit from telecalling: it is waiting in Farm Visits.
+    else if (t === 'follow-up-assigned') router.push('/farm-visits' as never);
     else if (t === 'product-photo' && n.data.farmerId) {
       router.push({ pathname: '/farmer', params: { farmerId: String(n.data.farmerId), name: '' } } as never);
     }

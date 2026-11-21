@@ -90,6 +90,15 @@ export type Farmer = {
    */
   onboardedBy?: string | AgronomistRef | null;
   /**
+   * Who gave this farmer their current agronomist, and when: a dashboard
+   * account's name, or the agronomist's own when they took the farmer on in
+   * the app. Empty on farmers assigned before this was recorded.
+   */
+  /** Whoever assigned them: a dashboard account's id, or this agronomist's own when they took the farmer on. */
+  assignedById?: string;
+  assignedByName?: string;
+  assignedAt?: string | null;
+  /**
    * The day the admin dashboard wants this farmer visited, set when they were
    * added or handed over there. Null when no date was given — the visit is
    * still expected, just not by a particular day.
