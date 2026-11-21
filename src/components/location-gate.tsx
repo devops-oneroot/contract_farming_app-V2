@@ -6,7 +6,7 @@ import { ActivityIndicator, AppState, Linking, Modal, Platform, Pressable, Style
 import { ThemedText } from '@/components/themed-text';
 import { Brand, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { isAgronomist, Role } from '@/lib/api';
+import { isTracked, Role } from '@/lib/api';
 import { ensureTrackingRunning } from '@/lib/tracking';
 
 type Problem = 'permission' | 'services' | 'background';
@@ -47,7 +47,8 @@ const COPY: Record<Problem, { title: string; body: string; action: string }> = {
  */
 export function LocationGate({ role }: { role?: Role }) {
   const theme = useTheme();
-  const needsBackground = isAgronomist(role);
+  // Anyone whose day is tracked - agronomists and attendance staff.
+  const needsBackground = isTracked(role);
 
   const [problem, setProblem] = useState<Problem | null>(null);
   const [canAskAgain, setCanAskAgain] = useState(true);

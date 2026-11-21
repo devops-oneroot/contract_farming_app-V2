@@ -31,7 +31,16 @@ import { useAuth } from '@/context/auth';
 import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, isAgronomist, isContract, PackageOfPractices, PopStep } from '@/lib/api';
+import {
+  api,
+  CatalogCrop,
+  Crop,
+  isAgronomist,
+  isAttendanceStaff,
+  isContract,
+  PackageOfPractices,
+  PopStep,
+} from '@/lib/api';
 
 // App accent + surface colors (green agri theme).
 const GREEN = Brand.primary;
@@ -73,6 +82,8 @@ function cropStage(dop: string | null, pop?: PackageOfPractices): { label: strin
 export default function HomeScreen() {
   const { user } = useAuth();
   if (isAgronomist(user?.role)) return <AgronomistHome />;
+  // Attendance staff: the same home, cut down to My Day and Attendance.
+  if (isAttendanceStaff(user?.role)) return <AgronomistHome attendanceOnly />;
   return <FarmerHome />;
 }
 

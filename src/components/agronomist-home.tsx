@@ -42,7 +42,12 @@ const firstName = (name?: string) => (name ?? '').trim().split(/\s+/)[0] || 'the
 // Quick-action grid: three across on a phone, four on a tablet.
 const GRID_GAP = 10;
 
-export function AgronomistHome() {
+/**
+ * `attendanceOnly`: the home for attendance staff. The same header and My Day
+ * card, with only the My Day and Attendance tiles - no farmers, visits, sales,
+ * stock, FPOs or reports, and none of their requests are made.
+ */
+export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: boolean } = {}) {
   const theme = useTheme();
   const router = useRouter();
   const scheme = useColorScheme();
@@ -71,21 +76,22 @@ export function AgronomistHome() {
     useCallback(() => {
       if (!user) return;
       // Independent: a slow or failed one must not blank the others.
-      api
-        .listDiseaseReports(senior ? { status: 'open' } : { reporterId: user._id, status: 'open' })
-        .then((rs) => setOpenCount(rs.length))
-        .catch(() => setOpenCount(0));
       api.getDayStats(user._id).then(setStats).catch(() => setStats(null));
       // An END (the day's attendance) that couldn't reach the server is retried
       // every time the home screen is opened, until it lands.
       flushPendingStop().catch(() => {});
       api.currentTracking(user._id).then(setSession).catch(() => setSession(null));
       api.currentAttendance(user._id).then(setTodayAtt).catch(() => setTodayAtt(null));
+      if (attendanceOnly) return;
+      api
+        .listDiseaseReports(senior ? { status: 'open' } : { reporterId: user._id, status: 'open' })
+        .then((rs) => setOpenCount(rs.length))
+        .catch(() => setOpenCount(0));
       api
         .listFpos({ agronomistId: user._id })
         .then((fs) => setFpoCount(fs.length))
         .catch(() => setFpoCount(0));
-    }, [user, senior])
+    }, [user, senior, attendanceOnly])
   );
 
   // In full where there is room beside the greeting; "Wed, Nov 4" on phones up to 400pt wide.
@@ -105,7 +111,7 @@ export function AgronomistHome() {
   const usedToday =
     !tracking && !!todayAtt && new Date(todayAtt.startAt).toDateString() === new Date().toDateString();
 
-  const actions: {
+  const allActions: {
     key: string;
     label: string;
     sub: string;
@@ -209,6 +215,8 @@ export function AgronomistHome() {
       route: '/daily-report',
     },
   ];
+  // Attendance staff get My Day (tracking) and Attendance, nothing else.
+  const actions = attendanceOnly ? allActions.filter((a) => a.key === 'day' || a.key === 'attendance') : allActions;
 
   const slides: BannerSlide[] = [
     { image: require('@/assets/images/banners/contract-farming.jpg') },
@@ -347,15 +355,20 @@ export function AgronomistHome() {
               </View>
             </Pressable>
 
-            {/* Campaign photos, sliding on the orange. */}
-            <View style={styles.carousel}>
-              <BannerCarousel slides={slides} onDark />
-            </View>
+            {/* Campaign photos, sliding on the orange. Not for attendance staff:
+                the slides point at farm visits. */}
+            {!attendanceOnly && (
+              <View style={styles.carousel}>
+                <BannerCarousel slides={slides} onDark />
+              </View>
+            )}
           </SafeAreaView>
         </View>
 
         {/* Today, measured. Same numbers the daily report files. Overlaps the
-            hero's foot, which is what ties the two together. */}
+            hero's foot, which is what ties the two together. Visits, farmers
+            and sales mean nothing to attendance staff, so they skip it. */}
+        {!attendanceOnly && (
         <View style={styles.statsCard}>
           {statCells.map((s, i) => (
             <Pressable
@@ -380,14 +393,18 @@ export function AgronomistHome() {
             </Pressable>
           ))}
         </View>
+        )}
 
-        <View style={styles.content}>
+        <View style={[styles.content, attendanceOnly && { marginTop: Spacing.four }]}>
           {/* Actions as a grid — four stacked full-width rows pushed the role
               picker off the first screen entirely. */}
           <View style={styles.sectionRow}>
-            <ThemedText style={[styles.sectionTitle, { flex: 1 }]}>Quick actions</ThemedText>
+            <ThemedText style={[styles.sectionTitle, { flex: 1 }]}>
+              {attendanceOnly ? 'My day' : 'Quick actions'}
+            </ThemedText>
             {/* Same button as the one beside the Farm Visits search bar, so
                 registering a farmer looks the same wherever it is offered. */}
+            {!attendanceOnly && (
             <Pressable
               onPress={() => router.push('/onboard-farmer' as never)}
               hitSlop={8}
@@ -398,6 +415,7 @@ export function AgronomistHome() {
                 Farmer
               </ThemedText>
             </Pressable>
+            )}
           </View>
           <View style={styles.grid}>
             {actions.map((a) => (
@@ -431,8 +449,11 @@ export function AgronomistHome() {
             ))}
           </View>
 
-          <ThemedText style={styles.sectionTitle}>Work as</ThemedText>
+          {!attendanceOnly && <ThemedText style={styles.sectionTitle}>Work as</ThemedText>}
         </View>
+        {/* Everything below - roles and FPOs - is agronomist work. */}
+        {!attendanceOnly && (
+        <>
         {/* Sideways: four roles stacked took a whole screen of scrolling. */}
         <ScrollView
           horizontal
@@ -495,11 +516,14 @@ export function AgronomistHome() {
             )}
           </Pressable>
         </View>
+        </>
+        )}
       </ScrollView>
 
       <CallFab />
-      {/* Once a day: attendance and the visit target. Over everything else. */}
-      <DailyNoticeToast userId={user?._id} />
+      {/* Once a day: attendance and the visit target. Over everything else.
+          Not for attendance staff, who make no visits. */}
+      {!attendanceOnly && <DailyNoticeToast userId={user?._id} />}
     </View>
   );
 }

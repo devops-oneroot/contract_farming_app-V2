@@ -26,7 +26,7 @@ import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, Attendance, DayStats, MIN_ATTENDANCE_HOURS, TrackingSession } from '@/lib/api';
+import { api, Attendance, DayStats, isAttendanceStaff, MIN_ATTENDANCE_HOURS, TrackingSession } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { currentFix } from '@/lib/location-fix';
 import {
@@ -494,14 +494,17 @@ export default function TrackingScreen() {
               ))}
             </View>
 
-            <Pressable
-              onPress={() => router.push('/daily-report' as never)}
-              style={({ pressed }) => [styles.reportBtn, pressed && { opacity: 0.85 }]}>
-              <Ionicons name="clipboard-outline" size={18} color={GREEN} />
-              <ThemedText type="smallBold" style={{ color: GREEN }}>
-                File today's report
-              </ThemedText>
-            </Pressable>
+            {/* Attendance staff have no daily report - only attendance and tracking. */}
+            {!isAttendanceStaff(user?.role) && (
+              <Pressable
+                onPress={() => router.push('/daily-report' as never)}
+                style={({ pressed }) => [styles.reportBtn, pressed && { opacity: 0.85 }]}>
+                <Ionicons name="clipboard-outline" size={18} color={GREEN} />
+                <ThemedText type="smallBold" style={{ color: GREEN }}>
+                  File today's report
+                </ThemedText>
+              </Pressable>
+            )}
 
             {history.length > 0 && (
               <>

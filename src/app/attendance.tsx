@@ -12,7 +12,7 @@ import { useAuth } from '@/context/auth';
 import { useContentWidth } from '@/hooks/use-content-width';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, AttendanceDay, isAgronomist, MIN_ATTENDANCE_HOURS } from '@/lib/api';
+import { api, AttendanceDay, isTracked, MIN_ATTENDANCE_HOURS } from '@/lib/api';
 
 const ORANGE = Brand.primary; // today
 const GREEN = Brand.secondary; // present
@@ -116,13 +116,13 @@ export default function AttendanceScreen() {
 
   const stepMonth =(by: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + by, 1));
 
-  if (user && !isAgronomist(user.role)) {
+  if (user && !isTracked(user.role)) {
     return (
       <View style={[styles.container, { backgroundColor: screenBg }]}>
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
           <ScreenHeader onBack={() => router.back()} title="Attendance" />
           <ThemedText themeColor="textSecondary" style={{ padding: Spacing.four }}>
-            Attendance is only available for agronomists.
+            Attendance is only available for field staff.
           </ThemedText>
         </SafeAreaView>
       </View>

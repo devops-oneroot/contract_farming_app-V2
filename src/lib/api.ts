@@ -45,7 +45,7 @@ export const BASE_URL = (
 export const IS_DEV_API = __DEV__ && !!DEV_API_URL;
 if (__DEV__) console.log(`[api] ${IS_DEV_API ? 'DEV' : 'LIVE'} backend: ${BASE_URL}`);
 
-export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
+export type Role = 'farmer' | 'agronomist' | 'senior_agronomist' | 'attendance_staff';
 
 /**
  * A senior agronomist does everything an agronomist does, and additionally
@@ -55,6 +55,13 @@ export type Role = 'farmer' | 'agronomist' | 'senior_agronomist';
 export const isAgronomist = (role?: Role) =>
   role === 'agronomist' || role === 'senior_agronomist';
 export const isSenior = (role?: Role) => role === 'senior_agronomist';
+/**
+ * Attendance staff only mark attendance and have their day tracked: they see
+ * My Day (tracking) and Attendance, and nothing else. Not an agronomist.
+ */
+export const isAttendanceStaff = (role?: Role) => role === 'attendance_staff';
+/** Everyone whose working day is tracked: agronomists and attendance staff. */
+export const isTracked = (role?: Role) => isAgronomist(role) || isAttendanceStaff(role);
 /** The accounts a senior agronomist can create in the app. */
 export type AccountRole = 'agronomist' | 'senior_agronomist';
 

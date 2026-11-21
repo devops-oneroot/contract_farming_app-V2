@@ -28,7 +28,7 @@ import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constan
 import { useAuth } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, isAgronomist, Role } from '@/lib/api';
+import { api, Role } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { PHOTO_CREDITS } from '@/constants/photos';
 import { appVersion, lastUpdatedDate, versionWithDate } from '@/lib/app-version';
@@ -63,12 +63,14 @@ const GREEN_SURFACE = Brand.surface;
 function roleName(role?: Role) {
   if (role === 'senior_agronomist') return 'Senior agronomist';
   if (role === 'agronomist') return 'Agronomist';
+  if (role === 'attendance_staff') return 'Attendance & Tracking';
   return 'Farmer';
 }
 
 function roleIcon(role?: Role): keyof typeof Ionicons.glyphMap {
   if (role === 'senior_agronomist') return 'ribbon';
   if (role === 'agronomist') return 'flask';
+  if (role === 'attendance_staff') return 'finger-print';
   return 'leaf';
 }
 
@@ -158,7 +160,8 @@ export default function ProfileScreen() {
   const { user, updateUser, signOut } = useAuth();
 
   const screenBg = scheme === 'dark' ? theme.background : GREEN_SURFACE;
-  const isFarmer = !isAgronomist(user?.role);
+  // Attendance staff are not farmers: no farm boundary section for them.
+  const isFarmer = user?.role === 'farmer';
 
   const [editOpen, setEditOpen] = useState(false);
   const [editName, setEditName] = useState('');
