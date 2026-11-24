@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
-index 1e675c4..2fbe8fd 100644
+index 1e675c4..a5c9a87 100644
 --- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
 +++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
 @@ -90,6 +90,8 @@ class AudioRecorder(
@@ -11,17 +11,39 @@ index 1e675c4..2fbe8fd 100644
      if (isPaused) {
        recorder?.resume()
      } else {
-@@ -103,6 +105,9 @@ class AudioRecorder(
+@@ -103,6 +105,31 @@ class AudioRecorder(
        AudioRecordingService.startService(context, this)
        isRegisteredWithService = true
      }
 +    if (useForegroundService) {
 +      AudioRecordingService.getInstance()?.updateState(alreadyRecorded, false)
 +    }
++    emitPauseState(false)
++  }
++
++  /**
++   * OneRoot patch: tells JS the recorder is paused / running, so a Pause or
++   * Resume pressed on the notification reaches the app's recording session.
++   */
++  private fun emitPauseState(paused: Boolean) {
++    appContext?.mainQueue?.launch {
++      emit(
++        RECORDING_STATUS_UPDATE,
++        mapOf(
++          "id" to id,
++          "isFinished" to false,
++          "hasError" to false,
++          "error" to null,
++          "url" to null,
++          "isPaused" to paused,
++          "durationMillis" to getAudioRecorderDurationMillis()
++        )
++      )
++    }
    }
  
    fun recordWithOptions(atTimeSeconds: Double? = null, forDurationSeconds: Double? = null) {
-@@ -139,6 +144,10 @@ class AudioRecorder(
+@@ -139,6 +166,11 @@ class AudioRecorder(
      durationAlreadyRecorded = getAudioRecorderDurationMillis()
      isRecording = false
      isPaused = true
@@ -29,14 +51,71 @@ index 1e675c4..2fbe8fd 100644
 +    if (useForegroundService && isRegisteredWithService) {
 +      AudioRecordingService.getInstance()?.updateState(durationAlreadyRecorded, true)
 +    }
++    emitPauseState(true)
    }
  
    fun stopRecording(): Bundle {
+@@ -173,7 +205,9 @@ class AudioRecorder(
+           "isFinished" to true,
+           "hasError" to false,
+           "error" to null,
+-          "url" to url
++          "url" to url,
++          // OneRoot patch: the length, for a stop pressed on the notification.
++          "durationMillis" to durationMillis
+         )
+       )
+     }
 diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
-index 8328abb..0494ca7 100644
+index 8328abb..d600d10 100644
 --- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
 +++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
-@@ -91,19 +91,55 @@ class AudioRecordingService : Service() {
+@@ -51,10 +51,27 @@ class AudioRecordingService : Service() {
+       ACTION_STOP_RECORDING -> {
+         stopRecordingAndService()
+       }
++      // OneRoot patch: the notification's Pause / Resume button.
++      ACTION_TOGGLE_PAUSE -> {
++        togglePause()
++      }
+     }
+     return START_NOT_STICKY
+   }
+ 
++  /** OneRoot patch: pause a recording that is running, resume a paused one. */
++  private fun togglePause() {
++    activeRecorders.toList().forEach { weakRef ->
++      weakRef.get()?.let { recorder ->
++        try {
++          if (recorder.isPaused) recorder.record() else if (recorder.isRecording) recorder.pauseRecording()
++        } catch (e: Exception) {
++          Log.w(TAG, "Pause / resume from the notification failed", e)
++        }
++      }
++    }
++  }
++
+   private fun createNotificationChannelIfNeeded() {
+     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+       val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+@@ -82,6 +99,16 @@ class AudioRecordingService : Service() {
+       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+     )
+ 
++    val toggleIntent = Intent(this, AudioRecordingService::class.java).apply {
++      action = ACTION_TOGGLE_PAUSE
++    }
++    val togglePendingIntent = PendingIntent.getService(
++      this,
++      1,
++      toggleIntent,
++      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
++    )
++
+     val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let { appIntent ->
+       PendingIntent.getActivity(
+         this,
+@@ -91,19 +118,63 @@ class AudioRecordingService : Service() {
        )
      }
  
@@ -44,21 +123,16 @@ index 8328abb..0494ca7 100644
 -      .setContentTitle("Recording audio")
 -      .setContentText("Tap to return to app")
 +    // OneRoot patch: "Recording" with a live timer that continues from what was
-+    // already recorded, or "Recording paused" with where it stopped. No Stop
-+    // action: stopping here would end the file behind the app's back, and the
-+    // recording has to be stopped and saved in the app.
++    // already recorded, or "Recording paused" with where it stopped; Pause /
++    // Resume and Stop buttons. Each one emits recordingStatusUpdate (isPaused /
++    // isFinished), so the app's session follows; a stopped recording is then
++    // saved in the app.
 +    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
        .setOngoing(true)
 +      .setOnlyAlertOnce(true)
        .setContentIntent(contentIntent)
--      .addAction(
--        android.R.drawable.ic_delete,
--        "Stop",
--        stopPendingIntent
--      )
-       .setCategory(NotificationCompat.CATEGORY_SERVICE)
--      .build()
++      .setCategory(NotificationCompat.CATEGORY_SERVICE)
 +    if (isPausedNow) {
 +      builder
 +        .setContentTitle("Recording paused")
@@ -73,6 +147,18 @@ index 8328abb..0494ca7 100644
 +        .setWhen(System.currentTimeMillis() - recordedMs)
 +        .setUsesChronometer(true)
 +    }
++    builder
+       .addAction(
+-        android.R.drawable.ic_delete,
+-        "Stop",
+-        stopPendingIntent
++        if (isPausedNow) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
++        if (isPausedNow) "Resume" else "Pause",
++        togglePendingIntent
+       )
+-      .setCategory(NotificationCompat.CATEGORY_SERVICE)
+-      .build()
++      .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
 +    return builder.build()
 +  }
 +
@@ -101,3 +187,28 @@ index 8328abb..0494ca7 100644
    }
  
    private fun startForegroundWithNotification() {
+@@ -141,8 +212,14 @@ class AudioRecordingService : Service() {
+   }
+ 
+   private fun stopRecordingAndService() {
+-    activeRecorders.forEach { weakRef ->
+-      weakRef.get()?.stopRecording()
++    // OneRoot patch: a copy - stopRecording() unregisters, which edits this set
++    // mid-loop (ConcurrentModificationException).
++    activeRecorders.toList().forEach { weakRef ->
++      try {
++        weakRef.get()?.stopRecording()
++      } catch (e: Exception) {
++        Log.w(TAG, "Stop from the notification failed", e)
++      }
+     }
+     activeRecorders.clear()
+     stopSelf()
+@@ -163,6 +240,7 @@ class AudioRecordingService : Service() {
+     private const val NOTIFICATION_ID = 2001
+     private const val ACTION_START_RECORDING = "expo.modules.audio.action.START_RECORDING"
+     private const val ACTION_STOP_RECORDING = "expo.modules.audio.action.STOP_RECORDING"
++    private const val ACTION_TOGGLE_PAUSE = "expo.modules.audio.action.TOGGLE_PAUSE"
+ 
+     @Volatile
+     private var instance: AudioRecordingService? = null

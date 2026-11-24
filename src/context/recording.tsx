@@ -119,6 +119,38 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     if (!user && phase !== 'idle') reset();
   }, [user, phase, reset]);
 
+  /**
+   * Pause / Resume / Stop pressed on the Android notification (native patch,
+   * patches/expo-audio+*.patch): the recorder reports it, and the session
+   * follows so the screen and the home button show the truth. A build without
+   * those buttons never sends `isPaused`, and its stop events come from our own
+   * stop(), which has already cleared `live` - so this is a no-op there.
+   */
+  useEffect(() => {
+    const sub = recorder.addListener('recordingStatusUpdate', (raw) => {
+      const s = raw as typeof raw & { isPaused?: boolean; durationMillis?: number };
+      if (!live.current) return;
+      if (s.isFinished) {
+        live.current = false;
+        setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+        const url = s.url ?? recorder.uri;
+        if (!url) {
+          reset();
+          return;
+        }
+        setUri(url);
+        setSeconds(Math.round((s.durationMillis ?? 0) / 1000));
+        setPhase('stopped');
+        return;
+      }
+      if (typeof s.isPaused === 'boolean') {
+        if (s.durationMillis != null) setSeconds(Math.round(s.durationMillis / 1000));
+        setPhase(s.isPaused ? 'paused' : 'recording');
+      }
+    });
+    return () => sub.remove();
+  }, [recorder, reset]);
+
   const value = useMemo<Session>(
     () => ({ recorder, phase, seconds, uri, startedAt, start, pause, resume, stop, reset }),
     [recorder, phase, seconds, uri, startedAt, start, pause, resume, stop, reset]
