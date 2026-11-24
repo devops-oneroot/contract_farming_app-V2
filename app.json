@@ -2,7 +2,7 @@
   "expo": {
     "name": "CF-OneRoot",
     "slug": "cf-oneroot-v2",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "frontend",
@@ -98,7 +98,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow OneRoot to record the conversation while you onboard a farmer, so it can be reviewed later."
+          "microphonePermission": "Allow OneRoot to record the conversation while you onboard a farmer, so it can be reviewed later.",
+          "enableBackgroundRecording": true
         }
       ],
       "expo-localization"

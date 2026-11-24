@@ -65,6 +65,55 @@ export const isTracked = (role?: Role) => isAgronomist(role) || isAttendanceStaf
 /** The accounts a senior agronomist can create in the app. */
 export type AccountRole = 'agronomist' | 'senior_agronomist';
 
+/** A browser's audio type -> the file extension the server keeps. */
+const WEB_AUDIO_EXT: Record<string, string> = {
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/aac': 'aac',
+};
+
+/**
+ * Adds a local file to a multipart form.
+ *
+ * On a phone React Native's FormData takes `{ uri, name, type }`. A browser's
+ * FormData does not - it turns that object into the text "[object Object]" and
+ * no file is sent - so on web the file is read back from its blob: URL and
+ * attached as a real Blob, named by its actual type (browsers record webm).
+ */
+export async function appendFile(form: FormData, field: string, file: { uri: string; name: string; type: string }) {
+  if (Platform.OS !== 'web') {
+    form.append(field, file as any);
+    return;
+  }
+  const blob = await (await fetch(file.uri)).blob();
+  const type = (blob.type || file.type || '').split(';')[0].trim();
+  const ext = WEB_AUDIO_EXT[type];
+  const base = file.name.replace(/\.[^.]*$/, '') || field;
+  const name = ext ? `${base}.${ext}` : /^[\w-]+\.\w{2,5}$/.test(file.name) ? file.name : `${base}.bin`;
+  form.append(field, blob, name);
+}
+
+/** Why a recording was made (Quick actions > Recording). */
+export type RecordingReason = { key: string; label: string };
+
+export type Recording = {
+  _id: string;
+  user: string | null;
+  farmer: { _id: string; name: string; mobile: string } | null;
+  reason: string;
+  note: string;
+  // Named like a farmer's onboarding audio (onboardingAudioUrl / At / Seconds).
+  audioUrl: string;
+  /** When recording started. */
+  audioAt: string;
+  audioSeconds: number;
+  createdAt: string;
+};
+
 export type Farmer = {
   _id: string;
   name: string;
@@ -1648,6 +1697,34 @@ export const api = {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error((data as any)?.message || 'Could not upload the recording');
     return data as { ok: boolean; onboardingAudioUrl: string };
+  },
+
+  /** Quick actions > Recording: the Reason dropdown, from the server. */
+  recordingReasons: () => request<RecordingReason[]>('/api/recordings/reasons'),
+
+  /** Quick actions > Recording: upload one recording with its reason, farmer and note. */
+  // On web the file goes up as a real Blob (see appendFile); on a phone as { uri, name, type }.
+  saveRecording: async (body: {
+    audio: { uri: string; name: string; type: string };
+    reason: string;
+    userId: string;
+    farmerId?: string | null;
+    note?: string;
+    seconds?: number;
+    recordedAt?: string;
+  }) => {
+    const form = new FormData();
+    await appendFile(form, 'audio', body.audio);
+    form.append('reason', body.reason);
+    form.append('userId', body.userId);
+    if (body.farmerId) form.append('farmerId', body.farmerId);
+    if (body.note) form.append('note', body.note);
+    if (body.seconds) form.append('seconds', String(body.seconds));
+    if (body.recordedAt) form.append('recordedAt', body.recordedAt);
+    const res = await fetch(`${BASE_URL}/api/recordings`, { method: 'POST', body: form, headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any)?.message || 'Could not save the recording');
+    return data as Recording;
   },
 
   // Every visit made to one farmer, newest first — their visit history.

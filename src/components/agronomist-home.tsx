@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { NotificationBell } from '@/components/notification-bell';
 import { Brand, CardShadow, LogoAspect, Logos, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
+import { useRecordingSession } from '@/context/recording';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useContentWidth } from '@/hooks/use-content-width';
 import { useTheme } from '@/hooks/use-theme';
@@ -50,6 +51,8 @@ const GRID_GAP = 10;
 export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: boolean } = {}) {
   const theme = useTheme();
   const router = useRouter();
+  // A paused or stopped-but-unsaved recording shows on the Recording button.
+  const { phase: recPhase } = useRecordingSession();
   const scheme = useColorScheme();
   const width = useContentWidth();
   const cols = width >= 560 ? 4 : 3;
@@ -404,6 +407,23 @@ export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: bo
             </ThemedText>
             {/* Same button as the one beside the Farm Visits search bar, so
                 registering a farmer looks the same wherever it is offered. */}
+            {!attendanceOnly && (
+            <Pressable
+              onPress={() => router.push('/recording' as never)}
+              hitSlop={8}
+              accessibilityLabel={recPhase === 'paused' ? 'Resume the paused recording' : 'Recording'}
+              style={({ pressed }) => [
+                styles.addBtn,
+                // A paused or unsaved recording is waiting: amber, so it is not forgotten.
+                { backgroundColor: recPhase === 'paused' || recPhase === 'stopped' ? Brand.accent : Brand.secondary, marginRight: Spacing.two },
+                pressed && { opacity: 0.85 },
+              ]}>
+              <Ionicons name={recPhase === 'paused' ? 'pause' : recPhase === 'stopped' ? 'cloud-upload-outline' : 'mic'} size={15} color="#fff" />
+              <ThemedText type="small" style={{ color: '#fff', fontWeight: '800' }}>
+                {recPhase === 'paused' ? 'Resume' : recPhase === 'stopped' ? 'Save rec.' : 'Recording'}
+              </ThemedText>
+            </Pressable>
+            )}
             {!attendanceOnly && (
             <Pressable
               onPress={() => router.push('/onboard-farmer' as never)}

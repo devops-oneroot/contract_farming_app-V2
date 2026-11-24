@@ -52,6 +52,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "patch-package": "^8.0.0",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -62,7 +63,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "ota:preview": "eas update --branch preview --clear-cache",
-    "ota:prod": "eas update --branch production --environment production"
+    "ota:prod": "eas update --branch production --environment production",
+    "postinstall": "patch-package"
   },
   "private": true
 }

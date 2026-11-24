@@ -12,6 +12,7 @@ import { ExoFontFiles } from '@/constants/fonts';
 import { Brand, MaxContentWidth } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/context/auth';
+import { RecordingProvider } from '@/context/recording';
 import { applyPendingUpdate } from '@/lib/ota';
 import { refreshUnread } from '@/lib/notifications';
 import { listenForPushes, refreshPushToken, registerForPush } from '@/lib/push';
@@ -126,7 +127,10 @@ export default function RootLayout() {
       autocapture={!!POSTHOG_KEY}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AuthProvider>
-          <RootNavigation />
+          {/* Above every screen, so a paused recording survives leaving its screen. */}
+          <RecordingProvider>
+            <RootNavigation />
+          </RecordingProvider>
         </AuthProvider>
       </ThemeProvider>
     </PostHogProvider>

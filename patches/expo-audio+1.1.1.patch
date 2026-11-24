@@ -1,0 +1,103 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
+index 1e675c4..2fbe8fd 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecorder.kt
+@@ -90,6 +90,8 @@ class AudioRecorder(
+   }
+ 
+   fun record() {
++    // OneRoot patch: what is already on file, so the notification timer resumes from it.
++    val alreadyRecorded = if (isPaused) durationAlreadyRecorded else 0L
+     if (isPaused) {
+       recorder?.resume()
+     } else {
+@@ -103,6 +105,9 @@ class AudioRecorder(
+       AudioRecordingService.startService(context, this)
+       isRegisteredWithService = true
+     }
++    if (useForegroundService) {
++      AudioRecordingService.getInstance()?.updateState(alreadyRecorded, false)
++    }
+   }
+ 
+   fun recordWithOptions(atTimeSeconds: Double? = null, forDurationSeconds: Double? = null) {
+@@ -139,6 +144,10 @@ class AudioRecorder(
+     durationAlreadyRecorded = getAudioRecorderDurationMillis()
+     isRecording = false
+     isPaused = true
++    // OneRoot patch: the notification shows "Recording paused" and where.
++    if (useForegroundService && isRegisteredWithService) {
++      AudioRecordingService.getInstance()?.updateState(durationAlreadyRecorded, true)
++    }
+   }
+ 
+   fun stopRecording(): Bundle {
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
+index 8328abb..0494ca7 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioRecordingService.kt
+@@ -91,19 +91,55 @@ class AudioRecordingService : Service() {
+       )
+     }
+ 
+-    return NotificationCompat.Builder(this, CHANNEL_ID)
+-      .setContentTitle("Recording audio")
+-      .setContentText("Tap to return to app")
++    // OneRoot patch: "Recording" with a live timer that continues from what was
++    // already recorded, or "Recording paused" with where it stopped. No Stop
++    // action: stopping here would end the file behind the app's back, and the
++    // recording has to be stopped and saved in the app.
++    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+       .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+       .setOngoing(true)
++      .setOnlyAlertOnce(true)
+       .setContentIntent(contentIntent)
+-      .addAction(
+-        android.R.drawable.ic_delete,
+-        "Stop",
+-        stopPendingIntent
+-      )
+       .setCategory(NotificationCompat.CATEGORY_SERVICE)
+-      .build()
++    if (isPausedNow) {
++      builder
++        .setContentTitle("Recording paused")
++        .setContentText("Paused at ${clock(recordedMs)} - tap to resume in OneRoot")
++        .setShowWhen(false)
++        .setUsesChronometer(false)
++    } else {
++      builder
++        .setContentTitle("Recording")
++        .setContentText("Tap to return to OneRoot")
++        .setShowWhen(true)
++        .setWhen(System.currentTimeMillis() - recordedMs)
++        .setUsesChronometer(true)
++    }
++    return builder.build()
++  }
++
++  // OneRoot patch: the recording's state, for the notification.
++  private var recordedMs: Long = 0
++  private var isPausedNow: Boolean = false
++
++  private fun clock(ms: Long): String {
++    val total = ms / 1000
++    val h = total / 3600
++    val m = (total % 3600) / 60
++    val s = total % 60
++    return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
++  }
++
++  /** OneRoot patch: redraws the notification for recording / paused. */
++  fun updateState(alreadyRecordedMs: Long, paused: Boolean) {
++    recordedMs = alreadyRecordedMs
++    isPausedNow = paused
++    if (activeRecorders.isEmpty()) return
++    try {
++      val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++      notificationManager.notify(notificationId, buildNotification())
++    } catch (_: Exception) {
++    }
+   }
+ 
+   private fun startForegroundWithNotification() {
