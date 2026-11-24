@@ -411,16 +411,26 @@ export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: bo
             <Pressable
               onPress={() => router.push('/recording' as never)}
               hitSlop={8}
-              accessibilityLabel={recPhase === 'paused' ? 'Resume the paused recording' : 'Recording'}
+              accessibilityLabel={
+                recPhase === 'recording' ? 'Recording in progress - open it' : recPhase === 'paused' ? 'Resume the paused recording' : 'Recording'
+              }
               style={({ pressed }) => [
                 styles.addBtn,
-                // A paused or unsaved recording is waiting: amber, so it is not forgotten.
-                { backgroundColor: recPhase === 'paused' || recPhase === 'stopped' ? Brand.accent : Brand.secondary, marginRight: Spacing.two },
+                // Running in the background: red. Paused or unsaved: amber, so it is not forgotten.
+                {
+                  backgroundColor:
+                    recPhase === 'recording' ? Brand.danger : recPhase === 'paused' || recPhase === 'stopped' ? Brand.accent : Brand.secondary,
+                  marginRight: Spacing.two,
+                },
                 pressed && { opacity: 0.85 },
               ]}>
-              <Ionicons name={recPhase === 'paused' ? 'pause' : recPhase === 'stopped' ? 'cloud-upload-outline' : 'mic'} size={15} color="#fff" />
+              <Ionicons
+                name={recPhase === 'recording' ? 'radio-button-on' : recPhase === 'paused' ? 'pause' : recPhase === 'stopped' ? 'cloud-upload-outline' : 'mic'}
+                size={15}
+                color="#fff"
+              />
               <ThemedText type="small" style={{ color: '#fff', fontWeight: '800' }}>
-                {recPhase === 'paused' ? 'Resume' : recPhase === 'stopped' ? 'Save rec.' : 'Recording'}
+                {recPhase === 'recording' ? 'Recording…' : recPhase === 'paused' ? 'Resume' : recPhase === 'stopped' ? 'Save rec.' : 'Recording'}
               </ThemedText>
             </Pressable>
             )}

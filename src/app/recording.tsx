@@ -65,7 +65,7 @@ const level = (db?: number) => (db == null ? 0 : Math.max(0, Math.min(1, (db + 6
  *
  * No length limit. The recording lives in a session above the screens
  * (context/recording), so:
- *   - while RECORDING the screen cannot be left: pause or stop first;
+ *   - while RECORDING the screen can be left: it keeps recording (notification);
  *   - while PAUSED it can: the recording is kept, and coming back here resumes it;
  *   - once STOPPED it has to be saved with a reason, or deliberately discarded.
  */
@@ -227,23 +227,11 @@ export default function RecordingScreen() {
     if (saved && session.phase === 'idle') router.back();
   }, [saved, session.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Header back, Android back and iOS swipe: blocked while recording (pause or
-  // stop first) and once stopped (save or discard). Paused may leave - it is kept.
-  const blocked = phase === 'recording' || phase === 'stopped' || phase === 'saving';
+  // Header back, Android back and iOS swipe: free while recording or paused -
+  // the recording carries on (or waits) in the session, with its notification,
+  // and coming back here shows it. Blocked only once stopped: save or discard.
+  const blocked = phase === 'stopped' || phase === 'saving';
   usePreventRemove(blocked, ({ data }) => {
-    if (phase === 'recording') {
-      Alert.alert('Recording in progress', 'Pause the recording to leave this screen; you can resume it later. Or stop and save it.', [
-        { text: 'Keep recording', style: 'cancel' },
-        {
-          text: 'Pause and leave',
-          onPress: () => {
-            pause();
-            navigation.dispatch(data.action);
-          },
-        },
-      ]);
-      return;
-    }
     if (phase === 'saving') return;
     Alert.alert('Recording not saved', 'Save it with a reason, or discard it before leaving.', [
       { text: 'Stay', style: 'cancel' },
@@ -377,13 +365,13 @@ export default function RecordingScreen() {
               {live && (
                 <View style={[styles.hint, { backgroundColor: theme.backgroundElement }]}>
                   <Ionicons
-                    name={phase === 'recording' ? 'lock-closed-outline' : 'information-circle-outline'}
+                    name="information-circle-outline"
                     size={14}
                     color={theme.textSecondary}
                   />
                   <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
                     {phase === 'recording'
-                      ? 'Pause to leave this screen - you can come back and resume. Stop when you are done.'
+                      ? 'You can go back - it keeps recording. Come back here (or use the notification) to pause or stop.'
                       : 'Paused. You can leave this screen; the recording is kept and you can resume it here.'}
                   </ThemedText>
                 </View>
