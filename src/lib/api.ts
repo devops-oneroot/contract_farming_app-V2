@@ -47,6 +47,30 @@ if (__DEV__) console.log(`[api] ${IS_DEV_API ? 'DEV' : 'LIVE'} backend: ${BASE_U
 
 export type Role = 'farmer' | 'agronomist' | 'senior_agronomist' | 'attendance_staff';
 
+/** A farmer's enquiry. Keys match backend constants/enquiry.js. `null` = not asked. */
+export type EnquiryImplement =
+  | 'rotavator'
+  | 'mb_plough'
+  | 'five_axle_plough'
+  | 'cultivator'
+  | 'bed_farm'
+  | 'power_tool'
+  | 'mulcher';
+export type DripPart = 'laterals' | 'attachments';
+export type Enquiry = {
+  /** Yes/No first; the implements list is only asked after a yes. */
+  tractorImplements: boolean | null;
+  implements: EnquiryImplement[];
+  dripIrrigation: boolean | null;
+  /** Only meaningful when dripIrrigation is true. */
+  dripParts: DripPart[];
+  insurance: boolean | null;
+  kccLowCost: boolean | null;
+};
+
+/** One saved enquiry: what was answered, by whom, when. */
+export type EnquiryHistoryItem = { _id: string; enquiry: Enquiry; recordedByName: string; createdAt: string };
+
 /**
  * A senior agronomist does everything an agronomist does, and additionally
  * answers disease reports. Anywhere asking "is this an agronomist?" must use
@@ -922,6 +946,8 @@ export type User = {
   onboardedBy?: string | null;
   farmAddress?: FarmAddress;
   farmAddressManual?: boolean;
+  /** The farmer's enquiry (implements, drip, insurance, KCC low cost). */
+  enquiry?: Enquiry | null;
   /**
    * Photo of the farmer. Set at onboarding or added later from the edit screen;
    * empty when none has been taken. `getUser` returns the whole document, so
@@ -1243,6 +1269,18 @@ export const api = {
    * Changing `mobile` changes the number that farmer signs in with, so the
    * screen warns before saving it.
    */
+  /** A farmer's enquiry now, and every saved enquiry before it (newest first). */
+  getFarmerEnquiry: (agronomistId: string, farmerId: string) =>
+    request<{ _id: string; name: string; mobile: string; enquiry: Enquiry; history: EnquiryHistoryItem[] }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}/enquiry`
+    ),
+  /** Quick actions > Enquiry: save any farmer's enquiry (only the enquiry is written). */
+  setFarmerEnquiry: (agronomistId: string, farmerId: string, enquiry: Enquiry) =>
+    request<{ _id: string; name: string; mobile: string; enquiry: Enquiry; history: EnquiryHistoryItem[] }>(
+      `/api/users/agronomists/${agronomistId}/farmers/${farmerId}/enquiry`,
+      { method: 'PUT', body: JSON.stringify({ enquiry }) }
+    ),
+
   updateFarmerByAgronomist: (
     agronomistId: string,
     farmerId: string,
@@ -1251,6 +1289,7 @@ export const api = {
       mobile?: string;
       location?: { latitude: number | null; longitude: number | null };
       farmAddress?: { village?: string; taluk?: string; district?: string; state?: string };
+      enquiry?: Enquiry;
     }
   ) =>
     request<Farmer & { farmAddress?: FarmAddress; farmAddressManual?: boolean }>(
@@ -1331,6 +1370,8 @@ export const api = {
         area?: number | null;
         dop?: string | null;
       }[];
+      /** Sent only when the agronomist answered something; omitted leaves an existing farmer's enquiry alone. */
+      enquiry?: Enquiry;
     }
   ) =>
     request<{ farmer: Farmer; crops: Crop[]; crop: Crop | null; alreadyExisted: boolean }>(

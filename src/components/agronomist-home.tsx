@@ -401,52 +401,57 @@ export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: bo
         <View style={[styles.content, attendanceOnly && { marginTop: Spacing.four }]}>
           {/* Actions as a grid — four stacked full-width rows pushed the role
               picker off the first screen entirely. */}
-          <View style={styles.sectionRow}>
-            <ThemedText style={[styles.sectionTitle, { flex: 1 }]}>
-              {attendanceOnly ? 'My day' : 'Quick actions'}
-            </ThemedText>
-            {/* Same button as the one beside the Farm Visits search bar, so
-                registering a farmer looks the same wherever it is offered. */}
-            {!attendanceOnly && (
+          <ThemedText style={styles.sectionTitle}>
+            {attendanceOnly ? 'My day' : 'Quick actions'}
+          </ThemedText>
+          {/* Enquiry, Recording and Farmer: three equal buttons under the label. */}
+          {!attendanceOnly && (
+          <View style={styles.actionRow}>
+            {/* Record any farmer's enquiry: implements, drip, insurance, KCC. */}
+            <Pressable
+              onPress={() => router.push('/enquiry' as never)}
+              accessibilityLabel="Record a farmer's enquiry"
+              style={({ pressed }) => [styles.actionBtn, { backgroundColor: '#2563EB' }, pressed && styles.actionPressed]}>
+              <Ionicons name="clipboard" size={18} color="#fff" />
+              <ThemedText type="smallBold" style={styles.actionText} numberOfLines={1}>
+                Enquiry
+              </ThemedText>
+            </Pressable>
             <Pressable
               onPress={() => router.push('/recording' as never)}
-              hitSlop={8}
               accessibilityLabel={
                 recPhase === 'recording' ? 'Recording in progress - open it' : recPhase === 'paused' ? 'Resume the paused recording' : 'Recording'
               }
               style={({ pressed }) => [
-                styles.addBtn,
+                styles.actionBtn,
                 // Running in the background: red. Paused or unsaved: amber, so it is not forgotten.
                 {
                   backgroundColor:
                     recPhase === 'recording' ? Brand.danger : recPhase === 'paused' || recPhase === 'stopped' ? Brand.accent : Brand.secondary,
-                  marginRight: Spacing.two,
                 },
-                pressed && { opacity: 0.85 },
+                pressed && styles.actionPressed,
               ]}>
               <Ionicons
                 name={recPhase === 'recording' ? 'radio-button-on' : recPhase === 'paused' ? 'pause' : recPhase === 'stopped' ? 'cloud-upload-outline' : 'mic'}
-                size={15}
+                size={18}
                 color="#fff"
               />
-              <ThemedText type="small" style={{ color: '#fff', fontWeight: '800' }}>
+              <ThemedText type="smallBold" style={styles.actionText} numberOfLines={1}>
                 {recPhase === 'recording' ? 'Recording…' : recPhase === 'paused' ? 'Resume' : recPhase === 'stopped' ? 'Save rec.' : 'Recording'}
               </ThemedText>
             </Pressable>
-            )}
-            {!attendanceOnly && (
+            {/* Registering a farmer. */}
             <Pressable
               onPress={() => router.push('/onboard-farmer' as never)}
-              hitSlop={8}
               accessibilityLabel="Add a farmer"
-              style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}>
-              <Ionicons name="person-add" size={15} color="#fff" />
-              <ThemedText type="small" style={{ color: '#fff', fontWeight: '800' }}>
+              style={({ pressed }) => [styles.actionBtn, { backgroundColor: GREEN }, pressed && styles.actionPressed]}>
+              <Ionicons name="person-add" size={18} color="#fff" />
+              <ThemedText type="smallBold" style={styles.actionText} numberOfLines={1}>
                 Farmer
               </ThemedText>
             </Pressable>
-            )}
           </View>
+          )}
           <View style={styles.grid}>
             {actions.map((a) => (
               <Pressable
@@ -663,17 +668,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   sectionTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2, marginTop: Spacing.one },
-  sectionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  addBtn: {
+  /** Quick actions: three equal buttons in a row under the label. */
+  actionRow: { flexDirection: 'row', gap: Spacing.two, marginBottom: Spacing.three },
+  actionBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
-    height: 34,
-    paddingHorizontal: Spacing.three,
-    borderRadius: Radius.pill,
-    backgroundColor: GREEN,
+    height: 48,
+    paddingHorizontal: Spacing.two,
+    borderRadius: Spacing.three,
     ...CardShadow,
   },
+  actionText: { color: '#fff', fontSize: 14 },
+  actionPressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
 
   // Three across, icon over label - the "services" grid of most store apps.
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },

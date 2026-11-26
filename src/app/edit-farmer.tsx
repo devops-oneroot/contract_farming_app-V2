@@ -24,7 +24,8 @@ import { ThemedView } from '@/components/themed-view';
 import { Brand, Spacing } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
 import { useTheme } from '@/hooks/use-theme';
-import { api, CatalogCrop, Crop, FarmingType, User } from '@/lib/api';
+import { api, CatalogCrop, Crop, Enquiry, FarmingType, User } from '@/lib/api';
+import { blankEnquiry, EnquiryFields, enquiryChanged, enquiryOf } from '@/components/enquiry-fields';
 
 const GREEN = Brand.primary;
 const UNITS = ['kg', 'quintal', 'ton'];
@@ -122,6 +123,9 @@ export default function EditFarmerScreen() {
     longitude: null,
   });
 
+  /** The farmer's enquiry, edited here and saved with the details. */
+  const [enquiry, setEnquiry] = useState<Enquiry>(blankEnquiry());
+
   // Crops
   const [drafts, setDrafts] = useState<CropDraft[]>([]);
   const [dateFor, setDateFor] = useState<number | null>(null); // index whose picker is open
@@ -147,6 +151,7 @@ export default function EditFarmerScreen() {
           latitude: farmerUser.location?.latitude ?? null,
           longitude: farmerUser.location?.longitude ?? null,
         });
+        setEnquiry(enquiryOf(farmerUser.enquiry));
         setCatalog(catalogList);
         setDrafts(cropList.map(toDraft));
       } catch (e: any) {
@@ -242,6 +247,7 @@ export default function EditFarmerScreen() {
     ) {
       farmerBody.location = location;
     }
+    if (enquiryChanged(enquiry, enquiryOf(farmer.enquiry))) farmerBody.enquiry = enquiry;
 
     const commit = async () => {
       setSaving(true);
@@ -490,6 +496,12 @@ export default function EditFarmerScreen() {
                   </ThemedText>
                 </View>
               </Pressable>
+
+              {/* ---------------- Enquiry ---------------- */}
+              <ThemedText type="smallBold" style={styles.section}>
+                Enquiry
+              </ThemedText>
+              <EnquiryFields value={enquiry} onChange={setEnquiry} />
 
               {/* ---------------- Crops ---------------- */}
               <ThemedText type="smallBold" style={styles.section}>
