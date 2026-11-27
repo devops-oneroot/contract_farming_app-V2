@@ -236,6 +236,36 @@ export const onboarderId = (f: { onboardedBy?: string | AgronomistRef | null }) 
 export const onboarderName = (f: { onboardedBy?: string | AgronomistRef | null }) =>
   typeof f.onboardedBy === 'string' ? '' : (f.onboardedBy?.name ?? '');
 
+/** A farmer meetup planned from the dashboard. `meetupDate` is 'YYYY-MM-DD'. */
+export type Meetup = {
+  _id: string;
+  name: string;
+  description: string;
+  meetupDate: string | null;
+  /** Where it is held (empty on a meetup saved before locations). */
+  village?: string;
+  taluk?: string;
+  district?: string;
+  farmerCount: number;
+};
+
+/** A farmer registered for a meetup. */
+export type MeetupFarmer = {
+  _id: string;
+  meetupId: string;
+  name: string;
+  mobile: string;
+  village: string;
+  taluk: string;
+  district: string;
+  /** Land in acres; null on a farmer registered before it was asked. */
+  acres?: number | null;
+  createdAt: string;
+};
+
+/** A village in the meetup areas, with its taluk and district. */
+export type MeetupPlace = { village: string; taluk: string; district: string };
+
 /** One result from a place search: a real, geocoded location to pick from. */
 export type PlaceHit = {
   /** The full name, so the right one is recognisable by its surroundings. */
@@ -919,6 +949,9 @@ export type DailyReport = {
   dailyReport: string;
   dailyExpenses: string;
   foodExpense?: number;
+  /** ₹ in hand at the end of the day; null on reports filed before it was asked. */
+  cashInHand?: number | null;
+
   meterStart?: number;
   meterEnd?: number;
   totalKm?: number;
@@ -1427,6 +1460,8 @@ export const api = {
     expectedExpensesTomorrow?: string;
     planOfActionTomorrow?: string;
     foodExpense?: number;
+    /** Required from this release: ₹ in hand at the end of the day. */
+    cashInHand?: number;
     meterStart?: number;
     meterEnd?: number;
     /** Optional bill photos. */
@@ -2101,6 +2136,32 @@ export const api = {
    */
   searchPlaces: (query: string) =>
     request<{ places: PlaceHit[] }>(`/api/fpos/area/search?q=${encodeURIComponent(query)}`),
+
+  /** Farmer Meetup: meetups dated today or later, soonest first. */
+  upcomingMeetups: () => request<{ items: Meetup[] }>('/api/farmer-meetups/app/upcoming'),
+  /** Villages in the meetup areas (Chamarajanagar, Gokak, Mudalagi) matching what was typed. */
+  searchMeetupPlaces: (q: string) =>
+    request<{ places: MeetupPlace[] }>(`/api/farmer-meetups/app/places?q=${encodeURIComponent(q)}`),
+  /** Register a farmer for a meetup; recorded as this user. */
+  addMeetupFarmer: (
+    userId: string,
+    meetupId: string,
+    body: {
+      name: string;
+      mobile: string;
+      village: string;
+      taluk: string;
+      district: string;
+      acres: number;
+    }
+  ) =>
+    request<{ farmer: MeetupFarmer }>(`/api/farmer-meetups/app/${meetupId}/farmers`, {
+      method: 'POST',
+      body: JSON.stringify({ ...body, userId }),
+    }),
+  /** The farmers this user registered for a meetup, newest first. */
+  myMeetupFarmers: (userId: string, meetupId: string) =>
+    request<{ items: MeetupFarmer[] }>(`/api/farmer-meetups/app/${meetupId}/farmers?userId=${encodeURIComponent(userId)}`),
 
   /**
    * The same list, a page at a time, with the filtering done on the server.

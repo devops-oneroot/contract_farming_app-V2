@@ -134,6 +134,15 @@ export function AgronomistHome({ attendanceOnly = false }: { attendanceOnly?: bo
       route: '/farm-visits',
     },
     {
+      key: 'meetup',
+      label: 'Farmer Meetup',
+      sub: 'Register farmers',
+      icon: 'people',
+      tint: '#7C3AED',
+      well: '#F3E8FF',
+      route: '/meetup',
+    },
+    {
       key: 'disease',
       // One name for both sides of the same screen: a senior gives advisory
       // here, an agronomist receives it. The subtitle says which.

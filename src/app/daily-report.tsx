@@ -109,6 +109,8 @@ export default function DailyReportScreen() {
   const [reportText, setReportText] = useState('');
   const [planText, setPlanText] = useState('');
   const [foodExpense, setFoodExpense] = useState('');
+  // Required: the cash the agent holds at the end of the day (0 when none).
+  const [cashInHand, setCashInHand] = useState('');
   const [dailyExpenses, setDailyExpenses] = useState('');
   const [expectedExpensesTomorrow, setExpectedExpensesTomorrow] = useState('');
   const [meterStart, setMeterStart] = useState('');
@@ -219,6 +221,11 @@ export default function DailyReportScreen() {
     }
     const dailyReport = reportMode === 'points' ? toBullets(reportPoints) : reportText.trim();
     const planOfActionTomorrow = planMode === 'points' ? toBullets(planPoints) : planText.trim();
+    // Required on every report.
+    if (!cashInHand.trim() || !Number.isFinite(Number(cashInHand))) {
+      setError('Enter the cash in hand (₹). Enter 0 if you have none.');
+      return;
+    }
     if (
       !dailyReport &&
       !planOfActionTomorrow &&
@@ -252,6 +259,7 @@ export default function DailyReportScreen() {
         expectedExpensesTomorrow: expectedExpensesTomorrow.trim(),
         planOfActionTomorrow,
         foodExpense: foodExpense ? Number(foodExpense) : 0,
+        cashInHand: Number(cashInHand),
         meterStart: meterStart ? Number(meterStart) : 0,
         meterEnd: meterEnd ? Number(meterEnd) : 0,
         foodBills: bills.food.map((uri, i) => ({ uri, name: `food-bill-${i + 1}.jpg`, type: 'image/jpeg' })),
@@ -475,12 +483,16 @@ export default function DailyReportScreen() {
     value: string,
     onChange: (t: string) => void,
     placeholder: string,
-    numeric = false
+    numeric = false,
+    required = false
   ) => (
     <View style={{ marginTop: Spacing.three }}>
       <View style={styles.labelRow}>
         <Ionicons name={icon} size={16} color={GREEN} />
-        <ThemedText type="smallBold">{label}</ThemedText>
+        <ThemedText type="smallBold">
+          {label}
+          {required ? <ThemedText style={{ color: Brand.danger }}> *</ThemedText> : null}
+        </ThemedText>
       </View>
       <TextInput
         value={value}
@@ -557,6 +569,14 @@ export default function DailyReportScreen() {
                 <Ionicons name="speedometer-outline" size={12} color={GREEN} />
                 <ThemedText type="small" style={styles.histChipText}>
                   {r.totalKm} km
+                </ThemedText>
+              </View>
+            ) : null}
+            {r.cashInHand != null ? (
+              <View style={styles.histChip}>
+                <Ionicons name="wallet-outline" size={12} color={GREEN} />
+                <ThemedText type="small" style={styles.histChipText}>
+                  Cash ₹{Number(r.cashInHand).toLocaleString('en-IN')}
                 </ThemedText>
               </View>
             ) : null}
@@ -712,6 +732,7 @@ export default function DailyReportScreen() {
             {renderBills('food')}
             {renderField("Today's Expenses", 'cash-outline', dailyExpenses, setDailyExpenses, 'e.g. ₹500 fuel, ₹100 parking')}
             {renderBills('expense')}
+            {renderField('Cash in Hand (₹)', 'wallet-outline', cashInHand, setCashInHand, 'e.g. 1500 (0 if none)', true, true)}
 
             {/* Odometer: the agent types both readings; the difference is the day's km. */}
             <View style={{ marginTop: Spacing.three }}>
