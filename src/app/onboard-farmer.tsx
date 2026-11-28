@@ -31,6 +31,8 @@ import { api, CatalogCrop, Farmer, FarmingType, Fpo, VISIT_SOURCES, VisitSource 
 import { asMobile, digitsOf, MOBILE_DIGITS } from '@/lib/mobile';
 import { useOnboardingRecorder } from '@/lib/onboarding-recorder';
 import { CameraCapture } from '@/components/camera-capture';
+import { blankEnquiry, EnquiryFields, enquiryMissing } from '@/components/enquiry-fields';
+import type { Enquiry } from '@/lib/api';
 import * as ImageManipulator from 'expo-image-manipulator';
 
 const GREEN = Brand.primary;
@@ -103,6 +105,8 @@ export default function OnboardFarmerScreen() {
   const [referredBy, setReferredBy] = useState<VisitSource | null>(null);
   const [catalog, setCatalog] = useState<CatalogCrop[]>([]);
   const [crops, setCrops] = useState<DraftCrop[]>([]);
+  /** Same questions as Quick actions > Enquiry. Mandatory when onboarding. */
+  const [enquiry, setEnquiry] = useState<Enquiry>(blankEnquiry());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -291,6 +295,11 @@ export default function OnboardFarmerScreen() {
       setError('Please add at least one crop this farmer is growing.');
       return;
     }
+    const enquiryGap = enquiryMissing(enquiry);
+    if (enquiryGap) {
+      setError(enquiryGap);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -307,6 +316,8 @@ export default function OnboardFarmerScreen() {
           // A regular crop follows no schedule, so a planting date would mean nothing.
           dop: c.farmingType === 'contract' && c.dop ? c.dop.toISOString() : null,
         })),
+        // Always complete here — checked above.
+        enquiry,
       });
       posthog?.capture('farmer_onboarded', {
         crop_count: crops.length,
@@ -720,6 +731,12 @@ export default function OnboardFarmerScreen() {
               </ThemedText>
             </Pressable>
 
+            {/* Enquiry — same questions as Home > Quick actions > Enquiry. Mandatory. */}
+            <ThemedText type="small" themeColor="textSecondary" style={styles.enquiryHead}>
+              Enquiry <ThemedText style={{ color: Brand.danger }}>*</ThemedText>
+            </ThemedText>
+            <EnquiryFields value={enquiry} onChange={setEnquiry} required />
+
             {error && <ThemedText type="small" style={styles.error}>{error}</ThemedText>}
 
             <Pressable onPress={save} disabled={saving} style={[styles.saveBtn, { opacity: saving ? 0.6 : 1 }]}>
@@ -929,6 +946,7 @@ const styles = StyleSheet.create({
   },
   recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Brand.danger },
   checkLine: { marginTop: Spacing.two, fontSize: 12 },
+  enquiryHead: { marginTop: Spacing.four, marginBottom: Spacing.one },
   /** Who already holds this number — a warning to read, not an error to fix. */
   dupBox: {
     flexDirection: 'row',

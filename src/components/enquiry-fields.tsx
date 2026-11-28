@@ -89,7 +89,31 @@ const toggle = <T,>(list: T[], v: T): T[] => (list.includes(v) ? list.filter((x)
  *  3. insurance yes / no;
  *  4. KCC low cost yes / no.
  */
-export function EnquiryFields({ value, onChange }: { value: Enquiry; onChange: (e: Enquiry) => void }) {
+/**
+ * What is still unanswered, or null when the enquiry is complete. Used where
+ * the enquiry is mandatory (onboarding): every yes/no answered, and a "yes"
+ * to implements or drip needs at least one item ticked.
+ */
+export function enquiryMissing(e: Enquiry): string | null {
+  if (e.tractorImplements === null) return 'Enquiry: answer Tractor implements (Yes / No).';
+  if (e.tractorImplements && e.implements.length === 0) return 'Enquiry: tick at least one tractor implement.';
+  if (e.dripIrrigation === null) return 'Enquiry: answer Drip irrigation (Yes / No).';
+  if (e.dripIrrigation && e.dripParts.length === 0) return 'Enquiry: tick what they need for drip irrigation.';
+  if (e.insurance === null) return 'Enquiry: answer Insurance (Yes / No).';
+  if (e.kccLowCost === null) return 'Enquiry: answer KCC low cost (Yes / No).';
+  return null;
+}
+
+export function EnquiryFields({
+  value,
+  onChange,
+  required = false,
+}: {
+  value: Enquiry;
+  onChange: (e: Enquiry) => void;
+  /** Shows a red asterisk on each question. Validation is the caller's, via enquiryMissing. */
+  required?: boolean;
+}) {
   const theme = useTheme();
 
   const check = (checked: boolean, label: string, onPress: () => void) => (
@@ -124,6 +148,7 @@ export function EnquiryFields({ value, onChange }: { value: Enquiry; onChange: (
   const label = (text: string) => (
     <ThemedText type="small" themeColor="textSecondary" style={styles.groupLabel}>
       {text}
+      {required ? <ThemedText style={{ color: Brand.danger }}> *</ThemedText> : null}
     </ThemedText>
   );
 
