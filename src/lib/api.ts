@@ -66,6 +66,8 @@ export type Enquiry = {
   dripParts: DripPart[];
   insurance: boolean | null;
   kccLowCost: boolean | null;
+  chemicals: boolean | null;
+  bananaTissueCulture: boolean | null;
 };
 
 /** One saved enquiry: what was answered, by whom, when. */

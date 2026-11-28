@@ -33,6 +33,8 @@ export const blankEnquiry = (): Enquiry => ({
   dripParts: [],
   insurance: null,
   kccLowCost: null,
+  chemicals: null,
+  bananaTissueCulture: null,
 });
 
 /** Fills any missing keys, so a farmer saved before enquiries existed reads as blank. */
@@ -56,6 +58,8 @@ export function enquiryChanged(a: Enquiry, b: Enquiry): boolean {
       dripParts: [...e.dripParts].sort(),
       insurance: e.insurance ?? null,
       kccLowCost: e.kccLowCost ?? null,
+      chemicals: e.chemicals ?? null,
+      bananaTissueCulture: e.bananaTissueCulture ?? null,
     });
   return canon(a) !== canon(b);
 }
@@ -77,18 +81,13 @@ export function enquirySummary(e: Enquiry): string[] {
   }
   if (e.insurance != null) out.push(`Insurance: ${e.insurance ? 'Yes' : 'No'}`);
   if (e.kccLowCost != null) out.push(`KCC low cost: ${e.kccLowCost ? 'Yes' : 'No'}`);
+  if (e.chemicals != null) out.push(`Chemicals: ${e.chemicals ? 'Yes' : 'No'}`);
+  if (e.bananaTissueCulture != null) out.push(`Banana tissue culture: ${e.bananaTissueCulture ? 'Yes' : 'No'}`);
   return out;
 }
 
 const toggle = <T,>(list: T[], v: T): T[] => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-/**
- * The enquiry questions, shared by onboarding and Edit farmer:
- *  1. tractor implements yes / no - "yes" opens the implements to tick;
- *  2. drip irrigation yes / no - "yes" opens laterals and attachments;
- *  3. insurance yes / no;
- *  4. KCC low cost yes / no.
- */
 /**
  * What is still unanswered, or null when the enquiry is complete. Used where
  * the enquiry is mandatory (onboarding): every yes/no answered, and a "yes"
@@ -101,9 +100,20 @@ export function enquiryMissing(e: Enquiry): string | null {
   if (e.dripIrrigation && e.dripParts.length === 0) return 'Enquiry: tick what they need for drip irrigation.';
   if (e.insurance === null) return 'Enquiry: answer Insurance (Yes / No).';
   if (e.kccLowCost === null) return 'Enquiry: answer KCC low cost (Yes / No).';
+  if (e.chemicals === null) return 'Enquiry: answer Chemicals (Yes / No).';
+  if (e.bananaTissueCulture === null) return 'Enquiry: answer Banana tissue culture (Yes / No).';
   return null;
 }
 
+/**
+ * The enquiry questions, shared by onboarding, Edit farmer and Quick actions > Enquiry:
+ *  1. tractor implements yes / no - "yes" opens the implements to tick;
+ *  2. drip irrigation yes / no - "yes" opens laterals and attachments;
+ *  3. insurance yes / no;
+ *  4. KCC low cost yes / no;
+ *  5. chemicals yes / no;
+ *  6. banana tissue culture yes / no.
+ */
 export function EnquiryFields({
   value,
   onChange,
@@ -116,14 +126,21 @@ export function EnquiryFields({
 }) {
   const theme = useTheme();
 
-  const check = (checked: boolean, label: string, onPress: () => void) => (
+  /**
+   * One tickable row. `grow` makes it take an equal share of its row (Yes / No).
+   * Without it a Yes / No box is only as wide as its contents, and the
+   * flex: 1 label inside it gets no width at all, so "Yes" / "No" vanished.
+   */
+  const check = (checked: boolean, label: string, onPress: () => void, grow = false) => (
     <Pressable
       key={label}
       onPress={onPress}
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
+      accessibilityLabel={label}
       style={({ pressed }) => [
         styles.checkRow,
+        grow && { flex: 1 },
         {
           backgroundColor: checked ? Brand.primarySurface : theme.backgroundElement,
           borderColor: checked ? GREEN : 'transparent',
@@ -140,8 +157,8 @@ export function EnquiryFields({
   /** Two check boxes that cannot both be ticked: Yes, or No, or neither (not asked). */
   const yesNo = (v: boolean | null, onSet: (next: boolean | null) => void) => (
     <View style={styles.yesNoRow}>
-      {check(v === true, 'Yes', () => onSet(v === true ? null : true))}
-      {check(v === false, 'No', () => onSet(v === false ? null : false))}
+      {check(v === true, 'Yes', () => onSet(v === true ? null : true), true)}
+      {check(v === false, 'No', () => onSet(v === false ? null : false), true)}
     </View>
   );
 
@@ -188,6 +205,12 @@ export function EnquiryFields({
 
       {label('KCC low cost')}
       {yesNo(value.kccLowCost, (next) => onChange({ ...value, kccLowCost: next }))}
+
+      {label('Chemicals')}
+      {yesNo(value.chemicals, (next) => onChange({ ...value, chemicals: next }))}
+
+      {label('Banana tissue culture')}
+      {yesNo(value.bananaTissueCulture, (next) => onChange({ ...value, bananaTissueCulture: next }))}
     </View>
   );
 }
